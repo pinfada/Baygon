@@ -155,6 +155,12 @@ $ baygon serve --host 127.0.0.1 --port 8787
 Un plan sensible renvoie `428` tant que `"approved": true` n'est pas fourni :
 même règle que le terminal, Baygon propose, l'utilisateur décide.
 
+**Durcissement** : limitation de débit par client (120 req/min par défaut,
+réglable via `--rate-limit`, `429` + `Retry-After` au-delà, `/health` exempté),
+en-têtes de sécurité (`nosniff`, `no-store`, `X-Frame-Options: DENY` sur la
+page), et chaque échec d'authentification est publié sur le bus d'événements
+pour audit (ENF-009).
+
 **Authentification** (Article 7 — sécurité par défaut) : le serveur refuse de
 démarrer sans jeton. Le jeton n'est jamais dans `baygon.yaml` : il vient de
 `BAYGON_API_TOKEN` ou du gestionnaire de secrets (secret `API_TOKEN`). Chaque

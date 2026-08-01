@@ -25,6 +25,9 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import threading
+import time
+from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -55,9 +58,30 @@ def resolve_api_token(kernel: Kernel, env_var: str = TOKEN_ENV_VAR) -> str | Non
         return None
 
 
+class RateLimiter:
+    """Sliding-window throttle per client (ENF-011: abuse stays isolated)."""
+
+    def __init__(self, per_minute: int) -> None:
+        self.per_minute = per_minute
+        self._hits: dict[str, deque[float]] = {}
+        self._lock = threading.Lock()
+
+    def allow(self, client: str) -> bool:
+        now = time.monotonic()
+        with self._lock:
+            hits = self._hits.setdefault(client, deque())
+            while hits and now - hits[0] > 60:
+                hits.popleft()
+            if len(hits) >= self.per_minute:
+                return False
+            hits.append(now)
+            return True
+
+
 class BaygonAPIHandler(BaseHTTPRequestHandler):
     kernel: Kernel  # set by make_server on the handler subclass
     token: str | None = None
+    limiter: RateLimiter | None = None
 
     server_version = "BaygonAPI"
 
@@ -75,10 +99,32 @@ class BaygonAPIHandler(BaseHTTPRequestHandler):
         """Return True when the request may proceed; reply 401 otherwise."""
         if self._authorized():
             return True
+        # Every authentication failure is auditable (ENF-009).
+        self.kernel.bus.publish(
+            "AuthFailed", client=self.client_address[0], path=self.path
+        )
         self._json(401, {"error": "authentication required: send 'Authorization: Bearer <token>'"})
         return False
 
+    def _throttled(self) -> bool:
+        """Reply 429 and return True when the client exceeded the limit."""
+        if self.limiter is None or self.path == "/health":
+            return False
+        if self.limiter.allow(self.client_address[0]):
+            return False
+        self.send_response(429)
+        data = json.dumps({"error": "too many requests"}).encode("utf-8")
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Retry-After", "60")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(data)
+        return True
+
     def do_GET(self) -> None:  # noqa: N802 (http.server naming)
+        if self._throttled():
+            return
         if self.path in ("/", "/ui"):
             # Static shell page: no project data, no business logic —
             # every data call it makes goes through the token-gated API.
@@ -88,6 +134,8 @@ class BaygonAPIHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
             self.end_headers()
             self.wfile.write(data)
         elif self.path == "/health":
@@ -106,6 +154,8 @@ class BaygonAPIHandler(BaseHTTPRequestHandler):
             self._json(404, {"error": f"unknown path {self.path!r}"})
 
     def do_POST(self) -> None:  # noqa: N802
+        if self._throttled():
+            return
         if not self._require_auth():
             return
         if self.path == "/reload":
@@ -163,6 +213,8 @@ class BaygonAPIHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(data)
 
@@ -172,18 +224,29 @@ class BaygonAPIHandler(BaseHTTPRequestHandler):
 
 
 def make_server(
-    kernel: Kernel, host: str = "127.0.0.1", port: int = 8787, token: str | None = None
+    kernel: Kernel,
+    host: str = "127.0.0.1",
+    port: int = 8787,
+    token: str | None = None,
+    rate_limit_per_minute: int | None = None,
 ) -> ThreadingHTTPServer:
+    limiter = RateLimiter(rate_limit_per_minute) if rate_limit_per_minute else None
     handler = type(
-        "BoundBaygonAPIHandler", (BaygonAPIHandler,), {"kernel": kernel, "token": token}
+        "BoundBaygonAPIHandler", (BaygonAPIHandler,),
+        {"kernel": kernel, "token": token, "limiter": limiter},
     )
     return ThreadingHTTPServer((host, port), handler)
 
 
 def serve(
-    kernel: Kernel, host: str = "127.0.0.1", port: int = 8787, token: str | None = None
+    kernel: Kernel,
+    host: str = "127.0.0.1",
+    port: int = 8787,
+    token: str | None = None,
+    rate_limit_per_minute: int | None = 120,
 ) -> None:
-    server = make_server(kernel, host, port, token=token)
+    server = make_server(kernel, host, port, token=token,
+                         rate_limit_per_minute=rate_limit_per_minute)
     mode = "authenticated" if token else "UNAUTHENTICATED (--insecure)"
     print(f"baygon api listening on http://{host}:{server.server_address[1]} [{mode}]")
     try:

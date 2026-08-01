@@ -49,6 +49,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--insecure", action="store_true",
         help="explicitly start without authentication (local development only)",
     )
+    serve.add_argument(
+        "--rate-limit", type=int, default=120, metavar="N",
+        help="max requests per minute per client (default 120; 0 disables)",
+    )
 
     plan = sub.add_parser("plan", help="build and explain the plan for an intention")
     plan.add_argument("intent", help="intention in natural language, e.g. 'deploy to staging'")
@@ -145,7 +149,8 @@ def _dispatch(kernel: Kernel, args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 2
-        serve(kernel, host=args.host, port=args.port, token=token)
+        serve(kernel, host=args.host, port=args.port, token=token,
+              rate_limit_per_minute=args.rate_limit or None)
         return 0
 
     if args.command in ("plan", "explain"):
