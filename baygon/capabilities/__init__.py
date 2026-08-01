@@ -19,6 +19,7 @@ from baygon.capabilities.base import (
     RecoveryCapability,
     RepositoryCapability,
     SecretsCapability,
+    SSHCapability,
     WorkspaceCapability,
 )
 
@@ -36,5 +37,6 @@ __all__ = [
     "RecoveryCapability",
     "RepositoryCapability",
     "SecretsCapability",
+    "SSHCapability",
     "WorkspaceCapability",
 ]

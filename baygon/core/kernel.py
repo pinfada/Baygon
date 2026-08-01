@@ -18,7 +18,7 @@ from baygon.core import events
 from baygon.core.audit import AuditJournal
 from baygon.core.config import BaygonConfig, load_config
 from baygon.core.context import ContextEngine
-from baygon.core.errors import ValidationRequiredError
+from baygon.core.errors import BaygonError, ValidationRequiredError
 from baygon.core.events import EventBus
 from baygon.core.executor import ExecutionEngine, ExecutionResult
 from baygon.core.intent import IntentEngine, Plan
@@ -68,15 +68,49 @@ class Kernel:
         plan = self.plan(text, source=source)
         return self.execute(plan, approved=approved)
 
-    def execute(self, plan: Plan, approved: bool = False) -> ExecutionResult:
+    def execute(
+        self,
+        plan: Plan,
+        approved: bool = False,
+        completed: dict[str, Any] | None = None,
+    ) -> ExecutionResult:
         try:
-            result = self.executor.execute(plan, approved=approved)
+            result = self.executor.execute(plan, approved=approved, completed=completed)
         except ValidationRequiredError:
             self.audit.record(plan, None, status="suspended")
             raise
         self.audit.record(plan, result, status="success" if result.success else "failure")
         self.bus.publish(events.COMMAND_EXECUTED, plan=plan.id, success=result.success)
         return result
+
+    def resume(self, plan_id: str | None = None, approved: bool = False) -> ExecutionResult:
+        """Resume the last failed execution (ENF-017).
+
+        Steps that already succeeded are not re-executed: their recorded
+        outputs are reused and execution restarts at the failed step.
+        """
+        entry = self._last_failure(plan_id)
+        if entry is None:
+            target = f" for plan {plan_id!r}" if plan_id else ""
+            raise BaygonError(f"nothing to resume{target}: no failed execution recorded")
+        plan = self.intent_engine.plan(
+            entry["input"], source=entry["plan"]["intent"].get("source", "shell")
+        )
+        completed = {
+            step["id"]: step["output"]
+            for step in entry["result"]["steps"]
+            if step["success"]
+        }
+        return self.execute(plan, approved=approved, completed=completed)
+
+    def _last_failure(self, plan_id: str | None) -> dict[str, Any] | None:
+        for entry in reversed(self.audit.entries(limit=1000)):
+            if entry.get("status") != "failure" or not entry.get("result"):
+                continue
+            if plan_id is not None and entry["plan"]["id"] != plan_id:
+                continue
+            return entry
+        return None
 
     def capabilities(self) -> dict[str, Any]:
         return self.registry.capabilities()

@@ -91,7 +91,14 @@ $ baygon run "montre-moi les erreurs des dernières 24 heures"
 $ baygon run "analyse l'incident en production"
 $ baygon history                        # historique des intentions exécutées
 $ baygon context                        # contexte construit par le Context Engine
+$ baygon resume [--plan ID] [--yes]     # reprendre la dernière exécution échouée
+$ baygon run "ouvre une console ssh en production"   # commande de connexion (permission ssh)
 ```
+
+**Reprise** (ENF-017) : un plan interrompu par une panne fournisseur se reprend
+avec `baygon resume` — les étapes déjà réussies ne sont jamais ré-exécutées,
+leurs résultats enregistrés sont réutilisés et l'exécution redémarre à l'étape
+en échec. La validation des plans sensibles s'applique aussi à la reprise.
 
 ### Multi-projets
 
