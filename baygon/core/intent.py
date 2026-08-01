@@ -133,6 +133,7 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
     ("RestoreProject", re.compile(r"\b(restore|restaure\w*|restauration)\b", re.IGNORECASE)),
     ("OpenConsole", re.compile(r"\b(ssh|consoles?|terminal)\b", re.IGNORECASE)),
     ("ShowDatabase", re.compile(r"\b(base de donn[ée]es|database|db|postgres|psql)\b", re.IGNORECASE)),
+    ("ShowStorage", re.compile(r"\b(stockage|storage|s3|fichiers?|files?)\b", re.IGNORECASE)),
     # Diagnosis comes before the single-source reads: "Pourquoi la
     # production est lente ?" is a full diagnosis (chapter 4), even
     # though it also mentions slowness.
@@ -271,6 +272,13 @@ class IntentEngine:
                   parameters={"environment": env}, risk=RiskLevel.LOW)],
             [f"Database connection information for {env}; secrets are never exposed",
              "The operation is gated by the 'database' permission"],
+        )
+
+    def _plan_show_storage(self, intent: Intent) -> tuple[list[Step], list[str]]:
+        return (
+            [Step(id="1", capability="storage", action="list",
+                  parameters={"prefix": ""}, risk=RiskLevel.LOW)],
+            ["Listing stored files is a read-only action"],
         )
 
     def _plan_show_logs(self, intent: Intent) -> tuple[list[Step], list[str]]:

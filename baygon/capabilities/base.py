@@ -132,6 +132,15 @@ class NotificationCapability(CapabilityImplementation):
     def notify(self, message: str, **params: Any) -> dict[str, Any]: ...
 
 
+class StorageCapability(CapabilityImplementation):
+    """File management (chapter 8)."""
+
+    capability = "storage"
+
+    @abc.abstractmethod
+    def list(self, prefix: str = "", **params: Any) -> list[dict[str, Any]]: ...
+
+
 class SSHCapability(CapabilityImplementation):
     """Remote access (EF-010).
 
@@ -198,6 +207,7 @@ CAPABILITY_CONTRACTS: dict[str, type[CapabilityImplementation]] = {
         SecretsCapability,
         NotificationCapability,
         SSHCapability,
+        StorageCapability,
         WorkspaceCapability,
         BackupCapability,
         RecoveryCapability,
