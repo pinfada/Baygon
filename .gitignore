@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+# Baygon operating data (audit journal, local logs)
+.baygon/

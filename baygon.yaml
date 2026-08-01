@@ -1,0 +1,89 @@
+# baygon.yaml — single source of truth for this project.
+# Everything Baygon needs to know is declared here; nothing is assumed.
+
+version: 1
+
+project:
+  name: baygon
+  description: Lightweight orchestration layer demo project
+  repository: https://github.com/pinfada/Baygon
+  language: python
+  framework: none
+
+providers:
+  git:
+    type: repository
+    plugin: baygon_plugins.local_git:LocalGitRepository
+    default: true
+    options:
+      path: .
+  cloud:
+    type: deployment
+    plugin: baygon_plugins.mock_deploy:MockDeployment
+    default: true
+  logging:
+    type: logs
+    plugin: baygon_plugins.file_logs:FileLogs
+    default: true
+    options:
+      files:
+        development: .baygon/dev.log
+        staging: .baygon/staging.log
+        production: .baygon/production.log
+      max_lines: 100
+  monitoring:
+    type: metrics
+    plugin: baygon_plugins.static_metrics:StaticMetrics
+    default: true
+    options:
+      values:
+        development: {latency_ms: 12, error_rate: 0.0}
+        staging: {latency_ms: 35, error_rate: 0.01}
+        production: {latency_ms: 48, error_rate: 0.002}
+  secrets:
+    type: secrets
+    plugin: baygon_plugins.env_secrets:EnvSecrets
+    default: true
+    options:
+      prefix: BAYGON_
+  notifier:
+    type: notification
+    plugin: baygon_plugins.console_notification:ConsoleNotification
+    default: true
+
+environments:
+  development:
+    url: http://localhost:8000
+  staging:
+    url: https://staging.example.invalid
+  production:
+    url: https://example.invalid
+
+workspaces:
+  default:
+    kind: local
+
+ai:
+  default: offline
+  providers:
+    offline:
+      type: ai
+      plugin: baygon_plugins.offline_ai:OfflineAI
+
+observability:
+  logs: logging
+  metrics: monitoring
+
+commands:
+  deploy: "deploy"
+  test: "python -m unittest discover -s tests"
+
+permissions:
+  deploy: true
+  production: true
+  database: false
+  ssh: false
+
+metadata:
+  owner: pinfada
+  tags: [orchestrator, demo]

@@ -1,0 +1,101 @@
+"""Shared test fixtures: in-memory fake implementations and configs."""
+
+from __future__ import annotations
+
+import textwrap
+from pathlib import Path
+from typing import Any
+
+from baygon.capabilities import (
+    DeploymentCapability,
+    LogsCapability,
+    MetricsCapability,
+    NotificationCapability,
+    RepositoryCapability,
+)
+
+MINIMAL_YAML = textwrap.dedent(
+    """
+    version: 1
+    project:
+      name: demo
+    providers: {}
+    environments:
+      development: {}
+      staging: {}
+      production: {}
+    permissions:
+      deploy: true
+      production: true
+    """
+)
+
+
+def write_config(directory: Path, content: str = MINIMAL_YAML) -> Path:
+    file = directory / "baygon.yaml"
+    file.write_text(content, encoding="utf-8")
+    return file
+
+
+class FakeRepository(RepositoryCapability):
+    identifier = "fake-repo"
+
+    def get_latest_commit(self, **params: Any) -> dict[str, Any]:
+        return {"sha": "abc123", "author": "test", "subject": "initial"}
+
+    def history(self, limit: int = 10, **params: Any) -> list[dict[str, Any]]:
+        return [{"sha": "abc123", "author": "test", "subject": "initial"}]
+
+    def diff(self, **params: Any) -> str:
+        return ""
+
+
+class FakeDeployment(DeploymentCapability):
+    identifier = "fake-deploy"
+
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        super().__init__(config)
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def deploy(self, environment: str, **params: Any) -> dict[str, Any]:
+        self.calls.append(("deploy", {"environment": environment, **params}))
+        return {"environment": environment, "state": "live"}
+
+    def status(self, environment: str, **params: Any) -> dict[str, Any]:
+        return {"environment": environment, "state": "live"}
+
+    def rollback(self, environment: str, **params: Any) -> dict[str, Any]:
+        return {"environment": environment, "state": "rolled-back"}
+
+
+class BrokenDeployment(FakeDeployment):
+    identifier = "broken-deploy"
+
+    def deploy(self, environment: str, **params: Any) -> dict[str, Any]:
+        raise RuntimeError("provider exploded")
+
+
+class FakeLogs(LogsCapability):
+    identifier = "fake-logs"
+
+    def fetch(self, environment: str, since_hours: int = 1, **params: Any) -> list[str]:
+        return [f"{environment} log line"]
+
+
+class FakeMetrics(MetricsCapability):
+    identifier = "fake-metrics"
+
+    def fetch(self, environment: str, **params: Any) -> dict[str, Any]:
+        return {"latency_ms": 10}
+
+
+class FakeNotification(NotificationCapability):
+    identifier = "fake-notify"
+
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        super().__init__(config)
+        self.messages: list[str] = []
+
+    def notify(self, message: str, **params: Any) -> dict[str, Any]:
+        self.messages.append(message)
+        return {"delivered": True}
