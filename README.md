@@ -57,10 +57,12 @@ Les contrats de capacités (`baygon/capabilities/`) définissent *ce qui peut
 database, secrets, notification, ai.
 
 Les implémentations de référence (`baygon_plugins/`) vivent **hors du noyau**
-et ne sont chargées que si `baygon.yaml` les déclare : git local, déploiement
-simulé, logs fichiers, métriques statiques, secrets d'environnement,
-notifications console, IA hors-ligne (l'IA n'est jamais une dépendance
-obligatoire).
+et ne sont chargées que si `baygon.yaml` les déclare : git local, **GitHub
+(API REST)**, shell local (commandes déclarées), déploiement simulé, logs
+fichiers, métriques statiques, secrets d'environnement, notifications
+console, IA hors-ligne (l'IA n'est jamais une dépendance obligatoire).
+L'adaptateur GitHub lit son jeton dans l'environnement (`GITHUB_TOKEN` par
+défaut), jamais dans la configuration.
 
 ## Utilisation
 
@@ -98,6 +100,13 @@ $ baygon serve --host 127.0.0.1 --port 8787
 
 Un plan sensible renvoie `428` tant que `"approved": true` n'est pas fourni :
 même règle que le terminal, Baygon propose, l'utilisateur décide.
+
+**Authentification** (Article 7 — sécurité par défaut) : le serveur refuse de
+démarrer sans jeton. Le jeton n'est jamais dans `baygon.yaml` : il vient de
+`BAYGON_API_TOKEN` ou du gestionnaire de secrets (secret `API_TOKEN`). Chaque
+requête (sauf `/health`) doit porter `Authorization: Bearer <jeton>` sous
+peine de `401`. `--insecure` permet explicitement un démarrage sans
+authentification (développement local uniquement).
 
 Sans `--yes`, un plan à risque HIGH/CRITICAL est suspendu : Baygon propose,
 l'utilisateur décide.

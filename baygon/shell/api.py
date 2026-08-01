@@ -22,7 +22,9 @@ proposes, the user decides.
 
 from __future__ import annotations
 
+import hmac
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -31,18 +33,58 @@ from baygon.core.kernel import Kernel
 
 MAX_BODY_BYTES = 64 * 1024
 
+#: Environment variable holding the API token by default.
+TOKEN_ENV_VAR = "BAYGON_API_TOKEN"
+#: Secret name looked up in the secrets capability as a fallback.
+TOKEN_SECRET_NAME = "API_TOKEN"
+
+
+def resolve_api_token(kernel: Kernel, env_var: str = TOKEN_ENV_VAR) -> str | None:
+    """Resolve the API token without ever reading it from baygon.yaml.
+
+    Order: process environment, then the secrets capability. Secrets are
+    never stored in clear text in the configuration (EF-011).
+    """
+    value = os.environ.get(env_var)
+    if value:
+        return value
+    try:
+        secrets = kernel.registry.resolve("secrets")
+        return str(secrets.get(TOKEN_SECRET_NAME))
+    except Exception:
+        return None
+
 
 class BaygonAPIHandler(BaseHTTPRequestHandler):
     kernel: Kernel  # set by make_server on the handler subclass
+    token: str | None = None
 
     server_version = "BaygonAPI"
 
     # ------------------------------------------------------------------
 
+    def _authorized(self) -> bool:
+        if self.token is None:
+            return True
+        header = self.headers.get("Authorization", "")
+        if not header.startswith("Bearer "):
+            return False
+        return hmac.compare_digest(header[len("Bearer "):], self.token)
+
+    def _require_auth(self) -> bool:
+        """Return True when the request may proceed; reply 401 otherwise."""
+        if self._authorized():
+            return True
+        self._json(401, {"error": "authentication required: send 'Authorization: Bearer <token>'"})
+        return False
+
     def do_GET(self) -> None:  # noqa: N802 (http.server naming)
         if self.path == "/health":
+            # Liveness stays open: it exposes no project data beyond the name.
             self._json(200, {"status": "ok", "ready": self.kernel.ready,
                              "project": self.kernel.config.project_name})
+        elif not self._require_auth():
+            return
         elif self.path == "/capabilities":
             self._json(200, self.kernel.capabilities())
         elif self.path == "/context":
@@ -53,6 +95,8 @@ class BaygonAPIHandler(BaseHTTPRequestHandler):
             self._json(404, {"error": f"unknown path {self.path!r}"})
 
     def do_POST(self) -> None:  # noqa: N802
+        if not self._require_auth():
+            return
         if self.path not in ("/plan", "/run"):
             self._json(404, {"error": f"unknown path {self.path!r}"})
             return
@@ -109,14 +153,21 @@ class BaygonAPIHandler(BaseHTTPRequestHandler):
         return
 
 
-def make_server(kernel: Kernel, host: str = "127.0.0.1", port: int = 8787) -> ThreadingHTTPServer:
-    handler = type("BoundBaygonAPIHandler", (BaygonAPIHandler,), {"kernel": kernel})
+def make_server(
+    kernel: Kernel, host: str = "127.0.0.1", port: int = 8787, token: str | None = None
+) -> ThreadingHTTPServer:
+    handler = type(
+        "BoundBaygonAPIHandler", (BaygonAPIHandler,), {"kernel": kernel, "token": token}
+    )
     return ThreadingHTTPServer((host, port), handler)
 
 
-def serve(kernel: Kernel, host: str = "127.0.0.1", port: int = 8787) -> None:
-    server = make_server(kernel, host, port)
-    print(f"baygon api listening on http://{host}:{server.server_address[1]}")
+def serve(
+    kernel: Kernel, host: str = "127.0.0.1", port: int = 8787, token: str | None = None
+) -> None:
+    server = make_server(kernel, host, port, token=token)
+    mode = "authenticated" if token else "UNAUTHENTICATED (--insecure)"
+    print(f"baygon api listening on http://{host}:{server.server_address[1]} [{mode}]")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

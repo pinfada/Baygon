@@ -36,6 +36,10 @@ def _build_parser() -> argparse.ArgumentParser:
     serve = sub.add_parser("serve", help="expose the Shell as a REST API")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8787)
+    serve.add_argument(
+        "--insecure", action="store_true",
+        help="explicitly start without authentication (local development only)",
+    )
 
     plan = sub.add_parser("plan", help="build and explain the plan for an intention")
     plan.add_argument("intent", help="intention in natural language, e.g. 'deploy to staging'")
@@ -92,9 +96,19 @@ def _dispatch(kernel: Kernel, args: argparse.Namespace) -> int:
         return 0
 
     if args.command == "serve":
-        from baygon.shell.api import serve
+        from baygon.shell.api import TOKEN_ENV_VAR, resolve_api_token, serve
 
-        serve(kernel, host=args.host, port=args.port)
+        token = resolve_api_token(kernel)
+        if token is None and not args.insecure:
+            # Security by default (Article 7): no token, no server.
+            print(
+                f"error: no API token found (set {TOKEN_ENV_VAR} or provide it via the "
+                "secrets capability); pass --insecure to explicitly start without "
+                "authentication",
+                file=sys.stderr,
+            )
+            return 2
+        serve(kernel, host=args.host, port=args.port, token=token)
         return 0
 
     if args.command in ("plan", "explain"):
