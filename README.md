@@ -69,6 +69,13 @@ relit `baygon.yaml` et reconstruit le catalogue de capacités **sans redémarrer
 Baygon**. Un nouveau fichier invalide laisse l'état courant intact ; le journal
 d'audit et les abonnements aux événements survivent au rechargement.
 
+Côté stockage, trois adaptateurs **S3-compatibles** (`baygon_plugins/s3.py`,
+AWS S3, MinIO…) couvrent les capacités `storage` (listing), `backup` (envoi
+du dump produit par l'outil spécialisé) et `recovery` (restauration de la
+sauvegarde la plus récente — action CRITICAL soumise à validation). Signature
+AWS SigV4 en stdlib pure, identifiants lus dans l'environnement
+(`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`).
+
 Côté données, l'adaptateur **PostgreSQL** (capacité `database`) retourne les
 informations de connexion et la commande console à partir d'un DSN lu dans
 l'environnement — le mot de passe n'est jamais exposé, la commande référence
