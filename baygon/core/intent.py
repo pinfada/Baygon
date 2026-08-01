@@ -132,6 +132,7 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
     ("BackupProject", re.compile(r"\b(backup|sauvegarde\w*)\b", re.IGNORECASE)),
     ("RestoreProject", re.compile(r"\b(restore|restaure\w*|restauration)\b", re.IGNORECASE)),
     ("OpenConsole", re.compile(r"\b(ssh|consoles?|terminal)\b", re.IGNORECASE)),
+    ("ShowDatabase", re.compile(r"\b(base de donn[ée]es|database|db|postgres|psql)\b", re.IGNORECASE)),
     ("ShowLogs", re.compile(r"\b(logs?|journaux|erreurs?|errors?)\b", re.IGNORECASE)),
     ("ShowMetrics", re.compile(r"\b(metrics?|m[ée]triques?|performances?|lente?s?)\b", re.IGNORECASE)),
     ("ShowStatus", re.compile(r"\b(status|statut|[ée]tat)\b", re.IGNORECASE)),
@@ -258,6 +259,15 @@ class IntentEngine:
             [f"Remote access to {env}: Baygon returns the authorized connection "
              "command, it never opens the session itself (EF-010)",
              "The operation is gated by the 'ssh' permission"],
+        )
+
+    def _plan_show_database(self, intent: Intent) -> tuple[list[Step], list[str]]:
+        env = intent.parameters["environment"]
+        return (
+            [Step(id="1", capability="database", action="info",
+                  parameters={"environment": env}, risk=RiskLevel.LOW)],
+            [f"Database connection information for {env}; secrets are never exposed",
+             "The operation is gated by the 'database' permission"],
         )
 
     def _plan_show_logs(self, intent: Intent) -> tuple[list[Step], list[str]]:

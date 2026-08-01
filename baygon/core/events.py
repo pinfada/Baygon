@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 # Well-known event names. Plugins may publish their own.
 PROJECT_OPENED = "ProjectOpened"
+PROJECT_RELOADED = "ProjectReloaded"
 PLAN_CREATED = "PlanCreated"
 PLAN_SUSPENDED = "PlanSuspended"
 EXECUTION_STARTED = "ExecutionStarted"

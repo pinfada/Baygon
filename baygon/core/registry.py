@@ -84,6 +84,11 @@ class CapabilityRegistry:
         if self._defaults.get(capability) == identifier:
             del self._defaults[capability]
 
+    def clear(self) -> None:
+        """Remove every implementation (hot reload rebuilds the catalog)."""
+        self._implementations.clear()
+        self._defaults.clear()
+
     def capabilities(self) -> dict[str, list[dict[str, str]]]:
         """Expose available capabilities and their implementations."""
         return {

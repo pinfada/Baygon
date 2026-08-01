@@ -64,6 +64,16 @@ console, IA hors-ligne (l'IA n'est jamais une dépendance obligatoire).
 L'adaptateur GitHub lit son jeton dans l'environnement (`GITHUB_TOKEN` par
 défaut), jamais dans la configuration.
 
+**Hot-reload** (chapitre 10) : `kernel.reload()` — ou `POST /reload` sur l'API —
+relit `baygon.yaml` et reconstruit le catalogue de capacités **sans redémarrer
+Baygon**. Un nouveau fichier invalide laisse l'état courant intact ; le journal
+d'audit et les abonnements aux événements survivent au rechargement.
+
+Côté données, l'adaptateur **PostgreSQL** (capacité `database`) retourne les
+informations de connexion et la commande console à partir d'un DSN lu dans
+l'environnement — le mot de passe n'est jamais exposé, la commande référence
+la variable (`psql "$STAGING_DATABASE_URL"`). Permission `database` requise.
+
 Côté observabilité, deux adaptateurs réels : **Loki** pour la capacité `logs`
 (requête LogQL par environnement) et **Prometheus** pour la capacité `metrics`
 (requêtes PromQL avec substitution de l'environnement). Baygon consulte, il ne
@@ -130,6 +140,7 @@ $ baygon serve --host 127.0.0.1 --port 8787
 | GET     | `/history`       | intentions exécutées                             |
 | POST    | `/plan`          | `{"intent": "…"}` → plan + explication           |
 | POST    | `/run`           | `{"intent": "…", "approved": bool}` → résultat   |
+| POST    | `/reload`        | recharge `baygon.yaml` à chaud (chapitre 10)     |
 
 Un plan sensible renvoie `428` tant que `"approved": true` n'est pas fourni :
 même règle que le terminal, Baygon propose, l'utilisateur décide.
