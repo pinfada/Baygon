@@ -66,6 +66,12 @@ class IntentEngineTest(unittest.TestCase):
         self.assertEqual(len(with_notify.steps), 3)
         self.assertEqual(with_notify.steps[-1].capability, "notification")
 
+    def test_project_identified_when_named_in_intent(self) -> None:
+        # Chapter 9 example: "Déploie JiyuFit." -> identify the project.
+        plan = self.engine.plan("Déploie Demo en staging")
+        self.assertEqual(plan.intent.parameters["project"], "demo")
+        self.assertIn("Project identified: demo", " / ".join(plan.reasoning))
+
     def test_diagnose_degrades_without_ai(self) -> None:
         plan = self.engine.plan("analyse le dernier incident en production")
         self.assertEqual(plan.intent.name, "Diagnose")

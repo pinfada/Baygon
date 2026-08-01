@@ -129,6 +129,8 @@ _ENVIRONMENTS = ("production", "staging", "development")
 _RULES: list[tuple[str, re.Pattern[str]]] = [
     ("DeployProject", re.compile(r"\b(deploy|d[ée]ploie[rs]?)\b", re.IGNORECASE)),
     ("RollbackDeployment", re.compile(r"\b(rollback|reviens|annule le d[ée]ploiement)\b", re.IGNORECASE)),
+    ("BackupProject", re.compile(r"\b(backup|sauvegarde\w*)\b", re.IGNORECASE)),
+    ("RestoreProject", re.compile(r"\b(restore|restaure\w*|restauration)\b", re.IGNORECASE)),
     ("ShowLogs", re.compile(r"\b(logs?|journaux|erreurs?|errors?)\b", re.IGNORECASE)),
     ("ShowMetrics", re.compile(r"\b(metrics?|m[ée]triques?|performances?|lente?s?)\b", re.IGNORECASE)),
     ("ShowStatus", re.compile(r"\b(status|statut|[ée]tat)\b", re.IGNORECASE)),
@@ -166,6 +168,18 @@ class IntentEngine:
                     raw_input=cleaned,
                     source=source,
                 )
+        # Commands declared in baygon.yaml resolve without being coded
+        # here: Baygon knows them through the configuration only.
+        for command in sorted(self._config.commands):
+            if re.search(rf"\b{re.escape(str(command))}\b", cleaned, re.IGNORECASE):
+                parameters = self._extract_parameters(cleaned)
+                parameters["command"] = str(command)
+                return Intent(
+                    name="RunCommand",
+                    parameters=parameters,
+                    raw_input=cleaned,
+                    source=source,
+                )
         raise UnknownIntentError(text, self.supported_intents())
 
     def _extract_parameters(self, text: str) -> dict[str, Any]:
@@ -180,6 +194,9 @@ class IntentEngine:
         hours = _HOURS.search(text)
         if hours:
             params["since_hours"] = int(hours.group(1))
+        project = self._config.project_name
+        if project.lower() in lowered:
+            params["project"] = project
         return params
 
     # ------------------------------------------------------------------
@@ -262,6 +279,41 @@ class IntentEngine:
             [Step(id="1", capability="repository", action="history",
                   parameters={"limit": 10}, risk=RiskLevel.LOW)],
             ["Repository history is a read-only action"],
+        )
+
+    def _plan_run_command(self, intent: Intent) -> tuple[list[Step], list[str]]:
+        command = intent.parameters["command"]
+        command_line = str(self._config.commands[command])
+        env = intent.parameters["environment"]
+        risk = RiskLevel.HIGH if env == "production" else RiskLevel.MEDIUM
+        reasoning = [
+            f"Command {command!r} is declared in baygon.yaml; the core does not code it",
+            f"It runs on {env} through the Workspace capability",
+        ]
+        if risk is RiskLevel.HIGH:
+            reasoning.append("Running a command on production is a production modification (HIGH)")
+        steps = [
+            Step(id="1", capability="workspace", action="execute",
+                 parameters={"command": command, "command_line": command_line, "environment": env},
+                 risk=risk),
+        ]
+        return steps, reasoning
+
+    def _plan_backup_project(self, intent: Intent) -> tuple[list[Step], list[str]]:
+        env = intent.parameters["environment"]
+        return (
+            [Step(id="1", capability="backup", action="backup",
+                  parameters={"environment": env}, risk=RiskLevel.MEDIUM)],
+            [f"Backup of {env} is an additive, reversible operation (MEDIUM)"],
+        )
+
+    def _plan_restore_project(self, intent: Intent) -> tuple[list[Step], list[str]]:
+        env = intent.parameters["environment"]
+        return (
+            [Step(id="1", capability="recovery", action="restore",
+                  parameters={"environment": env}, risk=RiskLevel.CRITICAL)],
+            [f"Restoring {env} overwrites its current state: destructive action (CRITICAL)",
+             "The plan stays suspended until explicit validation"],
         )
 
     def _plan_diagnose(self, intent: Intent) -> tuple[list[Step], list[str]]:

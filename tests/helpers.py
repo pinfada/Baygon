@@ -7,11 +7,14 @@ from pathlib import Path
 from typing import Any
 
 from baygon.capabilities import (
+    BackupCapability,
     DeploymentCapability,
     LogsCapability,
     MetricsCapability,
     NotificationCapability,
+    RecoveryCapability,
     RepositoryCapability,
+    WorkspaceCapability,
 )
 
 MINIMAL_YAML = textwrap.dedent(
@@ -87,6 +90,32 @@ class FakeMetrics(MetricsCapability):
 
     def fetch(self, environment: str, **params: Any) -> dict[str, Any]:
         return {"latency_ms": 10}
+
+
+class FakeWorkspace(WorkspaceCapability):
+    identifier = "fake-workspace"
+
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        super().__init__(config)
+        self.executed: list[tuple[str, str, str]] = []
+
+    def execute(self, command: str, command_line: str, environment: str, **params: Any) -> dict[str, Any]:
+        self.executed.append((command, command_line, environment))
+        return {"command": command, "exit_code": 0}
+
+
+class FakeBackup(BackupCapability):
+    identifier = "fake-backup"
+
+    def backup(self, environment: str, **params: Any) -> dict[str, Any]:
+        return {"environment": environment, "state": "backed-up"}
+
+
+class FakeRecovery(RecoveryCapability):
+    identifier = "fake-recovery"
+
+    def restore(self, environment: str, **params: Any) -> dict[str, Any]:
+        return {"environment": environment, "state": "restored"}
 
 
 class FakeNotification(NotificationCapability):

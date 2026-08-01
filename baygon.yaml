@@ -50,6 +50,13 @@ providers:
     type: notification
     plugin: baygon_plugins.console_notification:ConsoleNotification
     default: true
+  workspace:
+    type: workspace
+    plugin: baygon_plugins.local_shell:LocalShellWorkspace
+    default: true
+    options:
+      cwd: .
+      timeout_seconds: 300
 
 environments:
   development:
