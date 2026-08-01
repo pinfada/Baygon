@@ -97,6 +97,13 @@ class BaygonAPIHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         if not self._require_auth():
             return
+        if self.path == "/reload":
+            try:
+                self.kernel.reload()
+                self._json(200, {"reloaded": True, "capabilities": self.kernel.capabilities()})
+            except BaygonError as exc:
+                self._json(409, {"reloaded": False, "error": str(exc)})
+            return
         if self.path not in ("/plan", "/run"):
             self._json(404, {"error": f"unknown path {self.path!r}"})
             return

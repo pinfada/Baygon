@@ -53,6 +53,26 @@ class Kernel:
     def ready(self) -> bool:
         return self._ready
 
+    def reload(self) -> None:
+        """Hot reload (chapter 10): re-read baygon.yaml and rebuild the
+        capability catalog without restarting Baygon.
+
+        The new file is validated first — if it is invalid the running
+        state is left untouched. The event bus and the audit journal
+        survive the reload.
+        """
+        if self.config.path is None:
+            raise BaygonError("cannot reload: no configuration file backs this kernel")
+        config = load_config(self.config.path)  # invalid file -> raise, keep old state
+        self.registry.clear()
+        self.plugins = PluginManager(self.bus, self.registry)
+        self.plugins.load_from_config(config)
+        self.config = config
+        self.intent_engine = IntentEngine(config, self.registry)
+        self.executor = ExecutionEngine(config, self.registry, self.bus)
+        self.context_engine = ContextEngine(config, self.registry)
+        self.bus.publish(events.PROJECT_RELOADED, project=config.project_name)
+
     # ------------------------------------------------------------------
     # Public operations, used by every interface (terminal, API, ...)
     # ------------------------------------------------------------------
