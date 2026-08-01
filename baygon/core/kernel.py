@@ -17,6 +17,7 @@ from typing import Any
 from baygon.core import events
 from baygon.core.audit import AuditJournal
 from baygon.core.config import BaygonConfig, load_config
+from baygon.core.context import ContextEngine
 from baygon.core.errors import ValidationRequiredError
 from baygon.core.events import EventBus
 from baygon.core.executor import ExecutionEngine, ExecutionResult
@@ -32,6 +33,7 @@ class Kernel:
         self.registry = CapabilityRegistry(self.bus)
         self.plugins = PluginManager(self.bus, self.registry)
         self.intent_engine = IntentEngine(config, self.registry)
+        self.context_engine = ContextEngine(config, self.registry)
         self.executor = ExecutionEngine(config, self.registry, self.bus)
         base = Path(state_dir) if state_dir else (config.path.parent if config.path else Path("."))
         self.audit = AuditJournal(base / ".baygon")
@@ -78,6 +80,9 @@ class Kernel:
 
     def capabilities(self) -> dict[str, Any]:
         return self.registry.capabilities()
+
+    def context(self) -> dict[str, Any]:
+        return self.context_engine.build()
 
     def history(self, limit: int = 20) -> list[dict[str, Any]]:
         return self.audit.entries(limit=limit)

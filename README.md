@@ -16,9 +16,11 @@ implémente la documentation, jamais l'inverse.
 ```
 Utilisateur (téléphone, tablette, ordinateur)
         │
-   Baygon Shell          baygon/shell/      point d'entrée unique, sans logique métier
+   Baygon Shell          baygon/shell/      point d'entrée unique (terminal + API REST)
         │
    Intent Engine         baygon/core/intent.py    intention → plan (pense, n'agit jamais)
+        │
+   Context Engine        baygon/core/context.py   prépare le contexte, n'agit jamais
         │
    Execution Engine      baygon/core/executor.py  permissions, validation, exécution
         │
@@ -46,6 +48,9 @@ Composants du noyau (`baygon/core/`) :
   possibles.
 - **Audit** (`audit.py`) — chaque plan est journalisé : date, utilisateur,
   intention, plan, résultat (`.baygon/history.jsonl`).
+- **Context Engine** (`context.py`) — construit le contexte du projet
+  (fournisseurs, capacités, observabilité, permissions — jamais la valeur d'un
+  secret). Il prépare, il n'agit pas.
 
 Les contrats de capacités (`baygon/capabilities/`) définissent *ce qui peut
 être fait*, jamais *comment* : repository, deployment, logs, metrics,
@@ -70,7 +75,29 @@ $ baygon run "Déploie en production" --yes   # action sensible : validation exp
 $ baygon run "montre-moi les erreurs des dernières 24 heures"
 $ baygon run "analyse l'incident en production"
 $ baygon history                        # historique des intentions exécutées
+$ baygon context                        # contexte construit par le Context Engine
 ```
+
+### API REST
+
+Le même Shell est exposable en HTTP (stdlib uniquement) — utilisable depuis un
+téléphone, une tablette ou une automatisation :
+
+```console
+$ baygon serve --host 127.0.0.1 --port 8787
+```
+
+| Méthode | Chemin           | Description                                      |
+|---------|------------------|--------------------------------------------------|
+| GET     | `/health`        | état du noyau                                    |
+| GET     | `/capabilities`  | capacités et implémentations disponibles         |
+| GET     | `/context`       | contexte du projet                               |
+| GET     | `/history`       | intentions exécutées                             |
+| POST    | `/plan`          | `{"intent": "…"}` → plan + explication           |
+| POST    | `/run`           | `{"intent": "…", "approved": bool}` → résultat   |
+
+Un plan sensible renvoie `428` tant que `"approved": true` n'est pas fourni :
+même règle que le terminal, Baygon propose, l'utilisateur décide.
 
 Sans `--yes`, un plan à risque HIGH/CRITICAL est suspendu : Baygon propose,
 l'utilisateur décide.

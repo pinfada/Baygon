@@ -31,6 +31,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("validate", help="validate baygon.yaml")
     sub.add_parser("capabilities", help="list available capabilities and implementations")
+    sub.add_parser("context", help="show the project context built by the Context Engine")
+
+    serve = sub.add_parser("serve", help="expose the Shell as a REST API")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8787)
 
     plan = sub.add_parser("plan", help="build and explain the plan for an intention")
     plan.add_argument("intent", help="intention in natural language, e.g. 'deploy to staging'")
@@ -80,6 +85,16 @@ def _dispatch(kernel: Kernel, args: argparse.Namespace) -> int:
 
     if args.command == "capabilities":
         print(json.dumps(kernel.capabilities(), indent=2, ensure_ascii=False))
+        return 0
+
+    if args.command == "context":
+        print(json.dumps(kernel.context(), indent=2, ensure_ascii=False))
+        return 0
+
+    if args.command == "serve":
+        from baygon.shell.api import serve
+
+        serve(kernel, host=args.host, port=args.port)
         return 0
 
     if args.command in ("plan", "explain"):
