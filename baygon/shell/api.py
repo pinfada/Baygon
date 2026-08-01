@@ -79,7 +79,18 @@ class BaygonAPIHandler(BaseHTTPRequestHandler):
         return False
 
     def do_GET(self) -> None:  # noqa: N802 (http.server naming)
-        if self.path == "/health":
+        if self.path in ("/", "/ui"):
+            # Static shell page: no project data, no business logic —
+            # every data call it makes goes through the token-gated API.
+            from baygon.shell.web import PAGE
+
+            data = PAGE.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        elif self.path == "/health":
             # Liveness stays open: it exposes no project data beyond the name.
             self._json(200, {"status": "ok", "ready": self.kernel.ready,
                              "project": self.kernel.config.project_name})

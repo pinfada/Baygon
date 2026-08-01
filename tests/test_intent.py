@@ -72,6 +72,19 @@ class IntentEngineTest(unittest.TestCase):
         self.assertEqual(plan.intent.parameters["project"], "demo")
         self.assertIn("Project identified: demo", " / ".join(plan.reasoning))
 
+    def test_why_questions_resolve_to_full_diagnosis(self) -> None:
+        # Chapter 4 example: "Pourquoi la production est lente ?" is a
+        # diagnosis (logs + metrics + status), not a metrics-only read.
+        plan = self.engine.plan("Pourquoi la production est lente ?")
+        self.assertEqual(plan.intent.name, "Diagnose")
+        self.assertEqual(
+            [s.capability for s in plan.steps[:3]], ["logs", "metrics", "deployment"]
+        )
+
+    def test_plain_metrics_request_stays_metrics_only(self) -> None:
+        plan = self.engine.plan("montre-moi les métriques de production")
+        self.assertEqual(plan.intent.name, "ShowMetrics")
+
     def test_diagnose_degrades_without_ai(self) -> None:
         plan = self.engine.plan("analyse le dernier incident en production")
         self.assertEqual(plan.intent.name, "Diagnose")
