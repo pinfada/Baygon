@@ -64,6 +64,14 @@ console, IA hors-ligne (l'IA n'est jamais une dépendance obligatoire).
 L'adaptateur GitHub lit son jeton dans l'environnement (`GITHUB_TOKEN` par
 défaut), jamais dans la configuration.
 
+Deux autres adaptateurs réels sont fournis : **Claude** pour la capacité `ai`
+(SDK officiel `anthropic`, installable via `pip install baygon[claude]`, clé
+lue dans `ANTHROPIC_API_KEY`) et **Render** pour la capacité `deployment`
+(API REST, clé dans `RENDER_API_KEY`, services mappés par environnement dans
+`baygon.yaml`). Passer de l'IA hors-ligne à Claude — ou de Render à un autre
+cloud — ne demande qu'une modification de configuration : le noyau ne change
+jamais.
+
 ## Utilisation
 
 ```console
