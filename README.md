@@ -86,6 +86,13 @@ Côté observabilité, deux adaptateurs réels : **Loki** pour la capacité `log
 (requêtes PromQL avec substitution de l'environnement). Baygon consulte, il ne
 stocke jamais (EF-007).
 
+L'interchangeabilité promise par les documents est démontrée par des paires
+réelles : **GitHub ↔ GitLab** pour `repository`, **Render ↔ Fly.io** pour
+`deployment` (l'exemple littéral du chapitre 8) — passer de l'un à l'autre est
+un changement de `baygon.yaml`, jamais de code. Le déploiement en production
+(systemd + reverse proxy TLS) est documenté dans
+[`docs/11-deploiement.md`](docs/11-deploiement.md).
+
 Deux autres adaptateurs réels sont fournis : **Claude** pour la capacité `ai`
 (SDK officiel `anthropic`, installable via `pip install baygon[claude]`, clé
 lue dans `ANTHROPIC_API_KEY`) et **Render** pour la capacité `deployment`
