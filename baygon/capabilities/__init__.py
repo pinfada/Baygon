@@ -8,6 +8,7 @@ are registered through the Capability Registry.
 from baygon.capabilities.base import (
     CAPABILITY_CONTRACTS,
     AICapability,
+    BackupCapability,
     CapabilityImplementation,
     DatabaseCapability,
     DeploymentCapability,
@@ -15,13 +16,16 @@ from baygon.capabilities.base import (
     LogsCapability,
     MetricsCapability,
     NotificationCapability,
+    RecoveryCapability,
     RepositoryCapability,
     SecretsCapability,
+    WorkspaceCapability,
 )
 
 __all__ = [
     "CAPABILITY_CONTRACTS",
     "AICapability",
+    "BackupCapability",
     "CapabilityImplementation",
     "DatabaseCapability",
     "DeploymentCapability",
@@ -29,6 +33,8 @@ __all__ = [
     "LogsCapability",
     "MetricsCapability",
     "NotificationCapability",
+    "RecoveryCapability",
     "RepositoryCapability",
     "SecretsCapability",
+    "WorkspaceCapability",
 ]

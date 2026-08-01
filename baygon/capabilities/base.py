@@ -132,6 +132,37 @@ class NotificationCapability(CapabilityImplementation):
     def notify(self, message: str, **params: Any) -> dict[str, Any]: ...
 
 
+class WorkspaceCapability(CapabilityImplementation):
+    """Development environment: executes the project's declared commands.
+
+    The command lines come from the `commands` section of baygon.yaml;
+    the core never knows them.
+    """
+
+    capability = "workspace"
+
+    @abc.abstractmethod
+    def execute(self, command: str, command_line: str, environment: str, **params: Any) -> dict[str, Any]: ...
+
+
+class BackupCapability(CapabilityImplementation):
+    """Backup of a project environment."""
+
+    capability = "backup"
+
+    @abc.abstractmethod
+    def backup(self, environment: str, **params: Any) -> dict[str, Any]: ...
+
+
+class RecoveryCapability(CapabilityImplementation):
+    """Restoration. Destructive by nature: always requires validation."""
+
+    capability = "recovery"
+
+    @abc.abstractmethod
+    def restore(self, environment: str, **params: Any) -> dict[str, Any]: ...
+
+
 class AICapability(CapabilityImplementation):
     """Reasoning. Optional: Baygon must stay fully usable without it."""
 
@@ -153,6 +184,9 @@ CAPABILITY_CONTRACTS: dict[str, type[CapabilityImplementation]] = {
         DatabaseCapability,
         SecretsCapability,
         NotificationCapability,
+        WorkspaceCapability,
+        BackupCapability,
+        RecoveryCapability,
         AICapability,
     )
 }
