@@ -92,6 +92,40 @@ class FakeMetrics(MetricsCapability):
         return {"latency_ms": 10}
 
 
+class CountingRepository(FakeRepository):
+    """Counts calls so tests can prove a step was not re-executed."""
+
+    identifier = "counting-repo"
+
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        super().__init__(config)
+        self.calls = 0
+
+    def get_latest_commit(self, **params: Any) -> dict[str, Any]:
+        self.calls += 1
+        return super().get_latest_commit(**params)
+
+
+#: Shared switch for FlakyDeployment instances created via plugin loading.
+FLAKY_FAIL_ONCE: list[bool] = []
+
+
+class FlakyDeployment(FakeDeployment):
+    """Fails on demand, then succeeds — simulates a transient outage."""
+
+    identifier = "flaky-deploy"
+
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        super().__init__(config)
+        self.fail_next = False
+
+    def deploy(self, environment: str, **params: Any) -> dict[str, Any]:
+        if self.fail_next or (FLAKY_FAIL_ONCE and FLAKY_FAIL_ONCE.pop()):
+            self.fail_next = False
+            raise RuntimeError("transient provider outage")
+        return super().deploy(environment, **params)
+
+
 class FakeWorkspace(WorkspaceCapability):
     identifier = "fake-workspace"
 

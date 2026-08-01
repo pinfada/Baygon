@@ -132,6 +132,19 @@ class NotificationCapability(CapabilityImplementation):
     def notify(self, message: str, **params: Any) -> dict[str, Any]: ...
 
 
+class SSHCapability(CapabilityImplementation):
+    """Remote access (EF-010).
+
+    Baygon never opens the interactive session itself: it returns the
+    authorized connection command declared in configuration.
+    """
+
+    capability = "ssh"
+
+    @abc.abstractmethod
+    def command(self, environment: str, **params: Any) -> dict[str, Any]: ...
+
+
 class WorkspaceCapability(CapabilityImplementation):
     """Development environment: executes the project's declared commands.
 
@@ -184,6 +197,7 @@ CAPABILITY_CONTRACTS: dict[str, type[CapabilityImplementation]] = {
         DatabaseCapability,
         SecretsCapability,
         NotificationCapability,
+        SSHCapability,
         WorkspaceCapability,
         BackupCapability,
         RecoveryCapability,

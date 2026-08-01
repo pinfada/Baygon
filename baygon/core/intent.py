@@ -131,6 +131,7 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
     ("RollbackDeployment", re.compile(r"\b(rollback|reviens|annule le d[ée]ploiement)\b", re.IGNORECASE)),
     ("BackupProject", re.compile(r"\b(backup|sauvegarde\w*)\b", re.IGNORECASE)),
     ("RestoreProject", re.compile(r"\b(restore|restaure\w*|restauration)\b", re.IGNORECASE)),
+    ("OpenConsole", re.compile(r"\b(ssh|consoles?|terminal)\b", re.IGNORECASE)),
     ("ShowLogs", re.compile(r"\b(logs?|journaux|erreurs?|errors?)\b", re.IGNORECASE)),
     ("ShowMetrics", re.compile(r"\b(metrics?|m[ée]triques?|performances?|lente?s?)\b", re.IGNORECASE)),
     ("ShowStatus", re.compile(r"\b(status|statut|[ée]tat)\b", re.IGNORECASE)),
@@ -247,6 +248,16 @@ class IntentEngine:
                   parameters={"environment": env}, risk=risk)],
             [f"Rollback requested on environment {env}",
              "Rollback modifies a deployed environment, validation applies to production"],
+        )
+
+    def _plan_open_console(self, intent: Intent) -> tuple[list[Step], list[str]]:
+        env = intent.parameters["environment"]
+        return (
+            [Step(id="1", capability="ssh", action="command",
+                  parameters={"environment": env}, risk=RiskLevel.LOW)],
+            [f"Remote access to {env}: Baygon returns the authorized connection "
+             "command, it never opens the session itself (EF-010)",
+             "The operation is gated by the 'ssh' permission"],
         )
 
     def _plan_show_logs(self, intent: Intent) -> tuple[list[Step], list[str]]:

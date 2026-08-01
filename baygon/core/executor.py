@@ -35,6 +35,7 @@ _PERMISSION_BY_ACTION = {
     ("deployment", "deploy"): "deploy",
     ("deployment", "rollback"): "deploy",
     ("database", "info"): "database",
+    ("ssh", "command"): "ssh",
 }
 
 
@@ -86,7 +87,14 @@ class ExecutionEngine:
         self._registry = registry
         self._bus = bus
 
-    def execute(self, plan: Plan, approved: bool = False) -> ExecutionResult:
+    def execute(
+        self,
+        plan: Plan,
+        approved: bool = False,
+        completed: dict[str, Any] | None = None,
+    ) -> ExecutionResult:
+        """Run a plan; `completed` maps already-successful step ids to their
+        recorded outputs, which are reused instead of re-executing (ENF-017)."""
         if plan.requires_validation and not approved:
             self._bus.publish(events.PLAN_SUSPENDED, plan=plan.id, risk=plan.risk.value)
             raise ValidationRequiredError(plan.id)
@@ -95,8 +103,18 @@ class ExecutionEngine:
         self._bus.publish(events.EXECUTION_STARTED, plan=plan.id)
         results: list[StepResult] = []
         outputs: dict[str, Any] = {}
+        completed = completed or {}
 
         for step in self._ordered(plan.steps):
+            if step.id in completed:
+                output = completed[step.id]
+                results.append(StepResult(step=step, success=True, output=output))
+                outputs[step.id] = output
+                self._bus.publish(
+                    events.STEP_FINISHED, step=step.id, capability=step.capability,
+                    success=True, reused=True,
+                )
+                continue
             options: list[str] | None = None
             try:
                 self._check_permission(step)

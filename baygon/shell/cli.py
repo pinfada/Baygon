@@ -63,6 +63,10 @@ def _build_parser() -> argparse.ArgumentParser:
     explain = sub.add_parser("explain", help="explain why: reasoning behind a plan")
     explain.add_argument("intent", help="intention in natural language")
 
+    resume = sub.add_parser("resume", help="resume the last failed execution")
+    resume.add_argument("--plan", default=None, help="plan id to resume (default: last failure)")
+    resume.add_argument("--yes", action="store_true", help="approve sensitive actions")
+
     history = sub.add_parser("history", help="show executed intentions")
     history.add_argument("--limit", type=int, default=20)
 
@@ -157,6 +161,11 @@ def _dispatch(kernel: Kernel, args: argparse.Namespace) -> int:
             print("Re-run with --yes to approve it.", file=sys.stderr)
             return 3
         result = kernel.execute(plan, approved=args.yes)
+        print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False, default=str))
+        return 0 if result.success else 1
+
+    if args.command == "resume":
+        result = kernel.resume(plan_id=args.plan, approved=args.yes)
         print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False, default=str))
         return 0 if result.success else 1
 
