@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "baygon"
+version = "0.1.0"
+description = "Lightweight orchestration layer: one intention, one answer, from anywhere."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+authors = [{name = "Pinfada"}]
+# The core depends only on the filesystem and a YAML parser.
+dependencies = ["PyYAML>=6.0"]
+
+[project.scripts]
+baygon = "baygon.shell.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["baygon*", "baygon_plugins*"]
