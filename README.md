@@ -123,10 +123,13 @@ $ baygon --projects ~/projets run "Déploie JiyuFit en staging"   # routé par l
 $ baygon --projects ~/projets --project jiyufit history          # ciblage explicite
 ```
 
-### API REST
+### API REST et interface web
 
 Le même Shell est exposable en HTTP (stdlib uniquement) — utilisable depuis un
-téléphone, une tablette ou une automatisation :
+téléphone, une tablette ou une automatisation. `GET /` sert une **page web
+mobile minimaliste** (aucune donnée projet, aucune logique métier : elle pilote
+les mêmes endpoints authentifiés, jeton saisi dans la page, gestion du `428`
+avec bouton d'approbation explicite) :
 
 ```console
 $ baygon serve --host 127.0.0.1 --port 8787

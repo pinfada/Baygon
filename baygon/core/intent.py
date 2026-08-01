@@ -133,10 +133,13 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
     ("RestoreProject", re.compile(r"\b(restore|restaure\w*|restauration)\b", re.IGNORECASE)),
     ("OpenConsole", re.compile(r"\b(ssh|consoles?|terminal)\b", re.IGNORECASE)),
     ("ShowDatabase", re.compile(r"\b(base de donn[ée]es|database|db|postgres|psql)\b", re.IGNORECASE)),
+    # Diagnosis comes before the single-source reads: "Pourquoi la
+    # production est lente ?" is a full diagnosis (chapter 4), even
+    # though it also mentions slowness.
+    ("Diagnose", re.compile(r"\b(diagnosti\w*|incident|analyse[rs]?|pourquoi|why)\b", re.IGNORECASE)),
     ("ShowLogs", re.compile(r"\b(logs?|journaux|erreurs?|errors?)\b", re.IGNORECASE)),
     ("ShowMetrics", re.compile(r"\b(metrics?|m[ée]triques?|performances?|lente?s?)\b", re.IGNORECASE)),
     ("ShowStatus", re.compile(r"\b(status|statut|[ée]tat)\b", re.IGNORECASE)),
-    ("Diagnose", re.compile(r"\b(diagnosti\w*|incident|analyse[rs]?|pourquoi|why)\b", re.IGNORECASE)),
     ("ShowHistory", re.compile(r"\b(historique|history|commits?)\b", re.IGNORECASE)),
 ]
 
