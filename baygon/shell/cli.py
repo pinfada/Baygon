@@ -27,8 +27,17 @@ def _build_parser() -> argparse.ArgumentParser:
         "-f", "--file", default="baygon.yaml",
         help="path to baygon.yaml (default: ./baygon.yaml)",
     )
+    parser.add_argument(
+        "--projects", metavar="DIR", default=None,
+        help="manage several projects: discover every baygon.yaml under DIR",
+    )
+    parser.add_argument(
+        "--project", metavar="NAME", default=None,
+        help="target project when several are managed (default: named in the intention)",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
+    sub.add_parser("projects", help="list the managed projects")
     sub.add_parser("validate", help="validate baygon.yaml")
     sub.add_parser("capabilities", help="list available capabilities and implementations")
     sub.add_parser("context", help="show the project context built by the Context Engine")
@@ -63,7 +72,9 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
-        kernel = Kernel.start(args.file)
+        kernel = _select_kernel(args)
+        if kernel is None:  # the `projects` listing already printed
+            return 0
     except BaygonError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -80,6 +91,28 @@ def main(argv: list[str] | None = None) -> int:
     except BaygonError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+
+
+def _select_kernel(args: argparse.Namespace) -> Kernel | None:
+    """Single-project mode by default; multi-project when --projects is given."""
+    if args.projects is None:
+        if args.command == "projects":
+            kernel = Kernel.start(args.file)
+            print(kernel.config.project_name)
+            return None
+        return Kernel.start(args.file)
+
+    from baygon.core.projects import ProjectManager
+
+    manager = ProjectManager.discover(args.projects)
+    for name, error in manager.failures.items():
+        print(f"warning: project {name!r} unavailable: {error}", file=sys.stderr)
+    if args.command == "projects":
+        for name in manager.projects():
+            print(name)
+        return None
+    intent_text = getattr(args, "intent", "") or ""
+    return manager.resolve(intent_text, explicit=args.project)
 
 
 def _dispatch(kernel: Kernel, args: argparse.Namespace) -> int:

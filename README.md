@@ -64,6 +64,11 @@ console, IA hors-ligne (l'IA n'est jamais une dépendance obligatoire).
 L'adaptateur GitHub lit son jeton dans l'environnement (`GITHUB_TOKEN` par
 défaut), jamais dans la configuration.
 
+Côté observabilité, deux adaptateurs réels : **Loki** pour la capacité `logs`
+(requête LogQL par environnement) et **Prometheus** pour la capacité `metrics`
+(requêtes PromQL avec substitution de l'environnement). Baygon consulte, il ne
+stocke jamais (EF-007).
+
 Deux autres adaptateurs réels sont fournis : **Claude** pour la capacité `ai`
 (SDK officiel `anthropic`, installable via `pip install baygon[claude]`, clé
 lue dans `ANTHROPIC_API_KEY`) et **Render** pour la capacité `deployment`
@@ -86,6 +91,19 @@ $ baygon run "montre-moi les erreurs des dernières 24 heures"
 $ baygon run "analyse l'incident en production"
 $ baygon history                        # historique des intentions exécutées
 $ baygon context                        # contexte construit par le Context Engine
+```
+
+### Multi-projets
+
+Baygon gère plusieurs projets totalement indépendants (EF-001) : chaque
+sous-répertoire contenant un `baygon.yaml` est découvert, avec un noyau,
+des providers, des permissions et un historique propres. Un projet cassé
+est isolé, les autres continuent de fonctionner.
+
+```console
+$ baygon --projects ~/projets projects            # lister les projets découverts
+$ baygon --projects ~/projets run "Déploie JiyuFit en staging"   # routé par le nom
+$ baygon --projects ~/projets --project jiyufit history          # ciblage explicite
 ```
 
 ### API REST

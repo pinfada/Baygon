@@ -25,6 +25,19 @@ class UnknownIntentError(BaygonError):
         )
 
 
+class UnknownProjectError(BaygonError):
+    """The intention targets no identifiable project."""
+
+    def __init__(self, requested: str | None, known: list[str]):
+        self.requested = requested
+        self.known = known
+        detail = f"unknown project {requested!r}" if requested else "no project identified"
+        super().__init__(
+            f"{detail}; name one in the intention or pass --project. "
+            f"Known projects: {', '.join(known) or 'none'}"
+        )
+
+
 class CapabilityUnavailableError(BaygonError):
     """No usable implementation is registered for a capability."""
 
