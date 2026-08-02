@@ -122,9 +122,15 @@ un changement de `baygon.yaml`, jamais de code. Le déploiement en production
 (systemd + reverse proxy TLS) est documenté dans
 [`docs/11-deploiement.md`](docs/11-deploiement.md).
 
-Deux autres adaptateurs réels sont fournis : **Claude** pour la capacité `ai`
-(SDK officiel `anthropic`, installable via `pip install baygon[claude]`, clé
-lue dans `ANTHROPIC_API_KEY`) et **Render** pour la capacité `deployment`
+Pour la capacité `ai`, trois adaptateurs : **Claude** (SDK officiel
+`anthropic`, `pip install baygon[claude]`, clé dans `ANTHROPIC_API_KEY`),
+**compatible chat-completions** — un seul adaptateur pour **DeepSeek, Llama et
+Qwen via Ollama, vLLM, Mistral, Groq et tout modèle local ou open source**
+(`base_url` + `model` déclarés, clé optionnelle car les endpoints locaux n'en
+demandent pas) — et l'**IA hors-ligne** (l'IA n'est jamais obligatoire).
+Aucun défaut de fournisseur, nulle part.
+
+Autre adaptateur réel : **Render** pour la capacité `deployment`
 (API REST, clé dans `RENDER_API_KEY`, services mappés par environnement dans
 `baygon.yaml`). Passer de l'IA hors-ligne à Claude — ou de Render à un autre
 cloud — ne demande qu'une modification de configuration : le noyau ne change
