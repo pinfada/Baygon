@@ -18,7 +18,7 @@ class LocalGitRepository(RepositoryCapability):
     license = "MIT"
 
     def _git(self, *args: str) -> str:
-        path = self.config.get("path", ".")
+        path = self.resolve_path(self.config.get("path"))
         completed = subprocess.run(
             ["git", "-C", path, *args],
             capture_output=True, text=True, timeout=30,

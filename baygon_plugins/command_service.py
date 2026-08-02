@@ -37,7 +37,7 @@ class CommandService(ServiceCapability):
             shell=True,
             capture_output=True,
             text=True,
-            cwd=str(self.config.get("cwd", ".")),
+            cwd=str(self.resolve_path(self.config.get("cwd"))),
             timeout=int(self.config.get("timeout_seconds", 120)),
         )
         if completed.returncode != 0:

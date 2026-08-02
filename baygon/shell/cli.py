@@ -96,7 +96,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
-    for name, error in kernel.plugins.failures.items():
+    failures = getattr(getattr(kernel, "plugins", None), "failures", {})
+    for name, error in failures.items():
         print(f"warning: provider {name!r} unavailable: {error}", file=sys.stderr)
 
     try:
@@ -110,26 +111,30 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
 
-def _select_kernel(args: argparse.Namespace) -> Kernel | None:
-    """Single-project mode by default; multi-project when --projects is given."""
+def _select_target(args: argparse.Namespace):
+    """Return the project router: one project, or several."""
+    from baygon.core.projects import ProjectManager, SingleProject
+
     if args.projects is None:
-        if args.command == "projects":
-            kernel = Kernel.start(args.file)
-            print(kernel.config.project_name)
-            return None
-        return Kernel.start(args.file)
-
-    from baygon.core.projects import ProjectManager
-
+        return SingleProject(Kernel.start(args.file))
     manager = ProjectManager.discover(args.projects)
     for name, error in manager.failures.items():
         print(f"warning: project {name!r} unavailable: {error}", file=sys.stderr)
+    return manager
+
+
+def _select_kernel(args: argparse.Namespace) -> Kernel | None:
+    """Kernel addressed by this command, or None once handled here."""
+    target = _select_target(args)
     if args.command == "projects":
-        for name in manager.projects():
+        for name in target.projects():
             print(name)
         return None
+    if args.command == "serve":
+        # The server routes per request: no project to resolve now.
+        return target
     intent_text = getattr(args, "intent", "") or ""
-    return manager.resolve(intent_text, explicit=args.project)
+    return target.resolve(intent_text, explicit=args.project)
 
 
 def _dispatch(kernel: Kernel, args: argparse.Namespace) -> int:
@@ -156,7 +161,8 @@ def _dispatch(kernel: Kernel, args: argparse.Namespace) -> int:
     if args.command == "serve":
         from baygon.shell.api import TOKEN_ENV_VAR, resolve_api_token, serve
 
-        token = resolve_api_token(kernel)
+        first = kernel.kernel(kernel.projects()[0])
+        token = resolve_api_token(first)
         if token is None and not args.insecure:
             # Security by default (Article 7): no token, no server.
             print(

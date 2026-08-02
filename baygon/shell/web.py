@@ -33,13 +33,14 @@ PAGE = """<!doctype html>
 <body>
 <h1>Baygon <small>— une intention, une réponse, depuis n'importe où</small></h1>
 <input id="token" type="password" placeholder="Jeton d'accès (Authorization: Bearer …)"
-       onchange="loadModels()">
+       onchange="loadModels(); loadProjects()">
 <div class="row">
   <select id="mode" onchange="onMode()">
     <option value="ai">Mode IA — Baygon interprète les formulations libres</option>
     <option value="noai">Sans IA — règles déterministes uniquement</option>
   </select>
   <select id="model"><option value="">Modèle par défaut</option></select>
+  <select id="project"><option value="">Projet : automatique</option></select>
 </div>
 <p id="freshness" class="stale"></p>
 <input id="intent" placeholder="Votre intention — ex. « analyse l'incident en production »">
@@ -69,6 +70,22 @@ function onMode() {
   document.getElementById('freshness').textContent = ai ? '' :
     'Sans IA : seules les formulations reconnues par les règles sont acceptées.';
 }
+async function loadProjects() {
+  const select = document.getElementById('project');
+  try {
+    const r = await fetch('/projects', { headers: headers() });
+    if (!r.ok) return;
+    const names = await r.json();
+    select.innerHTML = names.length > 1
+      ? '<option value="">Projet : d\'après l\'intention</option>' : '';
+    for (const name of names) {
+      const option = document.createElement('option');
+      option.value = name; option.textContent = name;
+      select.appendChild(option);
+    }
+    if (names.length === 1) select.value = names[0];
+  } catch (e) { /* le champ reste utilisable */ }
+}
 async function loadModels() {
   const select = document.getElementById('model');
   const notes = document.getElementById('freshness');
@@ -95,12 +112,16 @@ async function call(path, approved = false) {
   if (document.getElementById('mode').value !== 'ai') body.ai = false;
   const model = document.getElementById('model').value;
   if (model) body.model = model;
+  const project = document.getElementById('project').value;
+  if (project) body.project = project;
   if (approved) body.approved = true;
   const r = await fetch(path, { method: 'POST', headers: headers(),
                                 body: JSON.stringify(body) });
   show(r.status, await r.json());
 }
 async function get(path) {
+  const project = document.getElementById('project').value;
+  if (project) path += (path.includes('?') ? '&' : '?') + 'project=' + encodeURIComponent(project);
   const r = await fetch(path, { headers: headers() });
   show(r.status, await r.json());
 }

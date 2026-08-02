@@ -124,6 +124,8 @@ class Plan:
                 "parameters": self.intent.parameters,
                 "raw_input": self.intent.raw_input,
                 "source": self.intent.source,
+                # Transparency (Article 8): rules or model?
+                "resolved_by": self.intent.resolved_by,
             },
             "risk": self.risk.value,
             "requires_validation": self.requires_validation,

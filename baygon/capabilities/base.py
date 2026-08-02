@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import abc
 import enum
+from pathlib import Path
 from typing import Any
 
 
@@ -38,9 +39,26 @@ class CapabilityImplementation(abc.ABC):
     author: str = ""
     license: str = ""
 
+    #: Directory holding the baygon.yaml that declared this provider.
+    #: Set by the Plugin Manager; ``None`` means "resolve like the caller".
+    project_dir: Path | None = None
+
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         self.config = config or {}
         self.state = ImplementationState.UNKNOWN
+
+    def resolve_path(self, value: Any, default: str = ".") -> Path:
+        """Interpret a declared path relative to the project, not the caller.
+
+        A project declares its paths in its own baygon.yaml, so they mean
+        "next to that file" — whatever directory the Shell runs from. This
+        is what keeps projects independent when several are managed at
+        once (chapter 3). Absolute paths are left untouched.
+        """
+        path = Path(str(value) if value is not None else default)
+        if path.is_absolute() or self.project_dir is None:
+            return path
+        return self.project_dir / path
 
     def health_check(self) -> bool:
         """Return True when the implementation is usable. Override if needed."""

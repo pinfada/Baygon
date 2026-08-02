@@ -78,6 +78,13 @@ class SessionAiModeTest(unittest.TestCase):
         self.assertEqual(len(SecondClassifierAI.prompts), 1)
         self.assertEqual(ClassifierAI.prompts, [])  # the default was not used
 
+    def test_serialized_plan_says_how_the_intent_was_resolved(self) -> None:
+        # Article 8: API and web clients must see it too, not just the CLI.
+        by_rules = self.kernel.plan("pourquoi la prod est lente ?").to_dict()
+        self.assertEqual(by_rules["intent"]["resolved_by"], "rules")
+        by_ai = self.kernel.plan("le p99 du checkout est monté à 3 secondes").to_dict()
+        self.assertEqual(by_ai["intent"]["resolved_by"], "ai")
+
     def test_unknown_model_is_refused_with_the_known_list(self) -> None:
         with self.assertRaises(CapabilityUnavailableError) as ctx:
             self.kernel.plan("peu importe", ai_model="gpt-inexistant")
