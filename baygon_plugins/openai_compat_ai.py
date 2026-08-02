@@ -47,6 +47,13 @@ class OpenAICompatibleAI(AICapability):
     # Transport — single overridable seam, faked in tests.
     # ------------------------------------------------------------------
 
+    def _get_json(self, url: str, headers: dict[str, str]) -> Any:
+        request = urllib.request.Request(
+            url, headers={"User-Agent": "baygon", **headers}, method="GET"
+        )
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return json.load(response)
+
     def _post_json(self, url: str, payload: dict[str, Any], headers: dict[str, str]) -> Any:
         request = urllib.request.Request(
             url,
@@ -75,6 +82,30 @@ class OpenAICompatibleAI(AICapability):
         if key_env and not os.environ.get(str(key_env)):
             return False
         return True
+
+    def describe(self) -> dict[str, Any]:
+        """Ask the endpoint which models it serves, to flag a stale one."""
+        model = self.config.get("model")
+        described: dict[str, Any] = {
+            "identifier": self.identifier,
+            "model": model,
+            "up_to_date": None,
+            "known_models": [],
+        }
+        try:
+            base_url = str(self.config["base_url"]).rstrip("/")
+            data = self._get_json(f"{base_url}/models", self._auth_headers())
+            known = [str(entry.get("id", "")) for entry in data.get("data", [])]
+        except Exception:
+            return described  # freshness unknown is not an error (ENF-006)
+        described["known_models"] = known
+        described["up_to_date"] = model in known
+        return described
+
+    def _auth_headers(self) -> dict[str, str]:
+        key_env = self.config.get("api_key_env")
+        key = os.environ.get(str(key_env)) if key_env else None
+        return {"Authorization": f"Bearer {key}"} if key else {}
 
     def complete(self, prompt: str, context: dict[str, Any] | None = None, **params: Any) -> str:
         base_url = self._require("base_url").rstrip("/")

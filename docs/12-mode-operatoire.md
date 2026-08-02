@@ -95,11 +95,55 @@ $ baygon capabilities                    # capacités et implémentations active
 $ baygon projects                        # projets gérés (voir §8)
 ```
 
-Les quatorze intentions reconnues : `DeployProject`, `RollbackDeployment`,
+Les quinze intentions reconnues : `DeployProject`, `RollbackDeployment`,
 `FixBug`, `ProposeChanges`, `BackupProject`, `RestoreProject`, `OpenConsole`,
-`ShowDatabase`, `ShowStorage`, `Diagnose`, `ShowLogs`, `ShowMetrics`,
-`ShowStatus`, `ShowHistory` — plus toute commande déclarée dans la section
-`commands` de `baygon.yaml`, reconnue par son nom.
+`RestartService`, `ShowDatabase`, `ShowStorage`, `Diagnose`, `ShowLogs`,
+`ShowMetrics`, `ShowStatus`, `ShowHistory` — plus toute commande déclarée dans
+la section `commands` de `baygon.yaml`, reconnue par son nom.
+
+Vous n'avez pas à connaître ces noms : **décrivez le symptôme**, Baygon
+reconnaît l'intention.
+
+```console
+$ baygon run "Les utilisateurs ne peuvent plus se connecter"   # → Diagnose
+$ baygon run "Le paiement renvoie une 500, regarde ce qui se passe"
+$ baygon run "La conso mémoire a doublé, tu peux voir d'où ça vient ?"
+$ baygon run "Est-ce que la migration de cette nuit est bien passée ?"  # → ShowStatus
+$ baygon run "Redémarre le worker"                             # → RestartService
+```
+
+Si aucune règle ne reconnaît la formulation **et** qu'une capacité `ai` est
+configurée, le modèle classe la demande parmi ces intentions — il n'en invente
+jamais d'autre, et le plan indique alors que l'intention a été identifiée par
+l'IA. Sans IA, le comportement est inchangé : une erreur claire listant les
+intentions connues (EF-014).
+
+### Choisir le mode et le modèle, à chaque session
+
+La configuration déclare **quels** modèles existent ; vous choisissez lequel
+utiliser au moment de vous connecter (règle 1 du Capability Registry :
+« implémentation explicitement demandée »).
+
+```console
+$ baygon models          # que puis-je choisir, et est-ce à jour ?
+llama-a-jour   llama3    openai-compatible  ACTIVE   à jour
+llama-perime   llama2    openai-compatible  ACTIVE   OBSOLÈTE
+
+$ baygon --no-ai run "..."                  # règles déterministes seules
+$ baygon --model llama-a-jour run "..."     # ce modèle-là
+```
+
+Le nom sélectionnable est celui **que vous avez déclaré** dans `baygon.yaml`
+(`llama-a-jour`), pas celui de l'adaptateur — un même adaptateur générique
+peut servir plusieurs modèles. La colonne de fraîcheur interroge le
+fournisseur : `à jour`, `OBSOLÈTE` si le modèle n'y figure plus, `inconnu` si
+le fournisseur ne sait pas répondre — la fraîcheur informe, elle ne bloque
+jamais (ENF-006).
+
+Sur la page web et l'API, mêmes possibilités : un sélecteur **Mode IA / Sans
+IA**, une liste de modèles alimentée par `GET /models` avec avertissement si
+l'un d'eux est obsolète, et les champs `"ai": false` / `"model": "..."` dans
+les requêtes `POST /plan` et `POST /run`.
 
 Règles à retenir :
 
@@ -108,7 +152,7 @@ Règles à retenir :
   suspendu tant que `--yes` n'est pas donné ;
 - une permission absente de `baygon.yaml` vaut **refus** (pas de défaut
   permissif). Permissions vérifiées : `deploy`, `production`,
-  `database`, `ssh`, `publish`.
+  `database`, `ssh`, `publish`, `restart`.
 
 ---
 
@@ -139,6 +183,7 @@ secrets vont **toujours** dans l'environnement, jamais dans le fichier.
 | notification | `baygon_plugins.slack_notification:SlackNotification` | `SLACK_WEBHOOK_URL` |
 | notification | `baygon_plugins.email_notification:EmailNotification` | `SMTP_PASSWORD` (option) |
 | notification | `baygon_plugins.console_notification:ConsoleNotification` | — |
+| service     | `baygon_plugins.command_service:CommandService`     | —              |
 | secrets     | `baygon_plugins.env_secrets:EnvSecrets`             | —              |
 
 Exemple — passer au vrai GitHub et à Render :
@@ -276,6 +321,63 @@ $ baygon --projects ~/projets run "Déploie MonApp en staging"   # routage par n
 $ baygon --projects ~/projets --project monapp history          # ciblage explicite
 ```
 
+### Un seul serveur pour toutes vos applications
+
+```console
+$ export BAYGON_API_TOKEN=$(openssl rand -hex 32)
+$ baygon --projects ~/projets serve --host 0.0.0.0 --port 8787
+baygon api listening on http://0.0.0.0:8787 [authenticated]
+```
+
+Le serveur route **par requête**, sans redémarrage :
+
+```console
+$ curl -s localhost:8787/health
+{"status": "ok", "projects": ["baygonweb", "jiyufit"], "ready": true}
+
+$ H="Authorization: Bearer $BAYGON_API_TOKEN"
+$ curl -s -H "$H" localhost:8787/projects
+["baygonweb", "jiyufit"]
+
+$ curl -s -H "$H" 'localhost:8787/capabilities?project=baygonweb'   # capacités de CE projet
+$ curl -s -H "$H" 'localhost:8787/models?project=jiyufit'           # modèles de CE projet
+$ curl -s -H "$H" 'localhost:8787/history?project=jiyufit'          # historique de CE projet
+```
+
+`/capabilities`, `/models`, `/context`, `/history` et `/reload` acceptent
+`?project=` ; `/plan` et `/run` acceptent `"project"` dans le corps JSON.
+Sans indication, le projet est déduit du nom cité dans l'intention.
+Chaque application garde son historique, ses capacités et ses modèles :
+rien ne fuit d'un projet à l'autre.
+
+Sur la page web, un sélecteur « Projet » apparaît dès qu'il y en a
+plusieurs, à côté du choix « Mode IA / Sans IA » et du choix du modèle.
+
+### Chemins relatifs et adaptateurs maison
+
+Ce qu'un projet déclare est relatif **à son propre `baygon.yaml`**, pas au
+répertoire depuis lequel le Shell tourne :
+
+```yaml
+providers:
+  shell:
+    type: workspace
+    plugin: baygon_plugins.local_shell:LocalShellWorkspace
+    options: {cwd: .}          # = le répertoire du projet
+  review:
+    type: review
+    plugin: revue_maison:MaRevue   # module posé à côté du baygon.yaml
+```
+
+Un module d'adaptateur posé à côté du `baygon.yaml` est importable sans
+toucher au `PYTHONPATH`. Si votre adaptateur lance des commandes,
+ancrez-le sur son projet avec `self.resolve_path()` :
+
+```python
+repo = str(self.resolve_path(self.config.get("cwd")))
+subprocess.run(["git", "-C", repo, "status"], check=True)
+```
+
 ---
 
 ## 9. Récupération après sinistre (l'objectif fondateur)
@@ -298,5 +400,5 @@ il n'y a rien d'autre à restaurer.
 
 ```console
 $ python -m unittest discover -s tests     # depuis le dépôt Baygon
-Ran 184 tests ... OK
+Ran 228 tests ... OK
 ```

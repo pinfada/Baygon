@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from baygon.capabilities import (
+    AICapability,
     BackupCapability,
     DeveloperCapability,
     DeploymentCapability,
@@ -178,6 +179,31 @@ class GatedWorkspace(WorkspaceCapability):
         if FIXBUG_STATE["attempts"] < FIXBUG_STATE["fixed_after"]:
             raise RuntimeError("2 tests failed: test_refund, test_checkout")
         return {"command": command, "exit_code": 0}
+
+
+class ClassifierAI(AICapability):
+    """AI double for intent-classification tests: scripted answer."""
+
+    identifier = "classifier-ai"
+    #: Class-level so the plugin loader's instance shares it with tests.
+    answer = "Diagnose"
+    prompts: list[str] = []
+
+    def complete(self, prompt: str, context: dict[str, Any] | None = None, **params: Any) -> str:
+        ClassifierAI.prompts.append(prompt)
+        return ClassifierAI.answer
+
+
+class SecondClassifierAI(ClassifierAI):
+    """A second declared model, to test explicit model selection."""
+
+    identifier = "second-classifier"
+    answer = "Diagnose"
+    prompts: list[str] = []
+
+    def complete(self, prompt: str, context: dict[str, Any] | None = None, **params: Any) -> str:
+        SecondClassifierAI.prompts.append(prompt)
+        return SecondClassifierAI.answer
 
 
 class FakeReview(ReviewCapability):

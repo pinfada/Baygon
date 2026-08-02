@@ -24,7 +24,7 @@ class LocalShellWorkspace(WorkspaceCapability):
             shell=True,
             capture_output=True,
             text=True,
-            cwd=self.config.get("cwd", "."),
+            cwd=self.resolve_path(self.config.get("cwd")),
             timeout=int(self.config.get("timeout_seconds", 300)),
         )
         if completed.returncode != 0:

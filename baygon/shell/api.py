@@ -27,6 +27,7 @@ import json
 import os
 import threading
 import time
+import urllib.parse
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -79,13 +80,29 @@ class RateLimiter:
 
 
 class BaygonAPIHandler(BaseHTTPRequestHandler):
-    kernel: Kernel  # set by make_server on the handler subclass
+    #: Project router (one or several projects), set by make_server.
+    target: Any
     token: str | None = None
     limiter: RateLimiter | None = None
 
     server_version = "BaygonAPI"
 
     # ------------------------------------------------------------------
+
+    @property
+    def kernel(self) -> Kernel:
+        """Kernel of the project addressed by this request."""
+        return self.target.resolve(self._intent_text, explicit=self._project)
+
+    def _route(self, intent_text: str = "", project: str | None = None) -> Kernel:
+        self._intent_text = intent_text
+        self._project = project
+        return self.kernel
+
+    def _query_project(self) -> str | None:
+        query = urllib.parse.urlsplit(self.path).query
+        values = urllib.parse.parse_qs(query).get("project")
+        return values[0] if values else None
 
     def _authorized(self) -> bool:
         if self.token is None:
@@ -99,10 +116,12 @@ class BaygonAPIHandler(BaseHTTPRequestHandler):
         """Return True when the request may proceed; reply 401 otherwise."""
         if self._authorized():
             return True
-        # Every authentication failure is auditable (ENF-009).
-        self.kernel.bus.publish(
-            "AuthFailed", client=self.client_address[0], path=self.path
-        )
+        # Every authentication failure is auditable (ENF-009): publish on
+        # every project's bus, since we cannot know the intended target.
+        for name in self.target.projects():
+            self.target.kernel(name).bus.publish(
+                "AuthFailed", client=self.client_address[0], path=self.path
+            )
         self._json(401, {"error": "authentication required: send 'Authorization: Bearer <token>'"})
         return False
 
@@ -139,17 +158,33 @@ class BaygonAPIHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
         elif self.path == "/health":
-            # Liveness stays open: it exposes no project data beyond the name.
-            self._json(200, {"status": "ok", "ready": self.kernel.ready,
-                             "project": self.kernel.config.project_name})
+            # Liveness stays open: it exposes no project data beyond names.
+            names = self.target.projects()
+            health = {
+                "status": "ok",
+                "projects": names,
+                "ready": all(self.target.kernel(name).ready for name in names),
+            }
+            if len(names) == 1:
+                health["project"] = names[0]
+            self._json(200, health)
         elif not self._require_auth():
             return
-        elif self.path == "/capabilities":
-            self._json(200, self.kernel.capabilities())
-        elif self.path == "/context":
-            self._json(200, self.kernel.context())
-        elif self.path == "/history":
-            self._json(200, self.kernel.history())
+        elif self.path.split("?")[0] == "/projects":
+            self._json(200, self.target.projects())
+        elif self.path.split("?")[0] in ("/capabilities", "/models", "/context", "/history"):
+            try:
+                kernel = self._route(project=self._query_project())
+            except BaygonError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            reader = {
+                "/capabilities": kernel.capabilities,
+                "/models": kernel.models,
+                "/context": kernel.context,
+                "/history": kernel.history,
+            }[self.path.split("?")[0]]
+            self._json(200, reader())
         else:
             self._json(404, {"error": f"unknown path {self.path!r}"})
 
@@ -158,10 +193,11 @@ class BaygonAPIHandler(BaseHTTPRequestHandler):
             return
         if not self._require_auth():
             return
-        if self.path == "/reload":
+        if self.path.split("?")[0] == "/reload":
             try:
-                self.kernel.reload()
-                self._json(200, {"reloaded": True, "capabilities": self.kernel.capabilities()})
+                kernel = self._route(project=self._query_project())
+                kernel.reload()
+                self._json(200, {"reloaded": True, "capabilities": kernel.capabilities()})
             except BaygonError as exc:
                 self._json(409, {"reloaded": False, "error": str(exc)})
             return
@@ -175,14 +211,21 @@ class BaygonAPIHandler(BaseHTTPRequestHandler):
             self._json(400, {"error": f"invalid request body: {exc}"})
             return
 
+        # Session options: target project, AI mode and chosen model.
+        session = {"ai": bool(body.get("ai", True)), "ai_model": body.get("model")}
+        try:
+            kernel = self._route(str(intent), project=body.get("project"))
+        except BaygonError as exc:
+            self._json(400, {"error": str(exc)})
+            return
         try:
             if self.path == "/plan":
-                plan = self.kernel.plan(str(intent), source="api")
+                plan = kernel.plan(str(intent), source="api", **session)
                 self._json(200, {"plan": plan.to_dict(), "explanation": plan.explain()})
             else:
-                plan = self.kernel.plan(str(intent), source="api")
+                plan = kernel.plan(str(intent), source="api", **session)
                 approved = bool(body.get("approved", False))
-                result = self.kernel.execute(plan, approved=approved)
+                result = kernel.execute(plan, approved=approved)
                 self._json(200 if result.success else 502, result.to_dict())
         except UnknownIntentError as exc:
             self._json(400, {"error": str(exc), "supported": exc.supported})
@@ -224,16 +267,21 @@ class BaygonAPIHandler(BaseHTTPRequestHandler):
 
 
 def make_server(
-    kernel: Kernel,
+    target: Any,
     host: str = "127.0.0.1",
     port: int = 8787,
     token: str | None = None,
     rate_limit_per_minute: int | None = None,
 ) -> ThreadingHTTPServer:
+    """`target` is a Kernel (single project) or a ProjectManager."""
+    if isinstance(target, Kernel):
+        from baygon.core.projects import SingleProject
+
+        target = SingleProject(target)
     limiter = RateLimiter(rate_limit_per_minute) if rate_limit_per_minute else None
     handler = type(
         "BoundBaygonAPIHandler", (BaygonAPIHandler,),
-        {"kernel": kernel, "token": token, "limiter": limiter},
+        {"target": target, "token": token, "limiter": limiter},
     )
     return ThreadingHTTPServer((host, port), handler)
 

@@ -38,6 +38,7 @@ _PERMISSION_BY_ACTION = {
     ("database", "info"): "database",
     ("ssh", "command"): "ssh",
     ("review", "publish"): "publish",
+    ("service", "restart"): "restart",
 }
 
 
@@ -218,7 +219,9 @@ class ExecutionEngine:
     def _run_step(self, step: Step, outputs: dict[str, Any]) -> StepResult:
         self._bus.publish(events.STEP_STARTED, step=step.id, capability=step.capability)
         try:
-            implementation = self._registry.resolve(step.capability)
+            implementation = self._registry.resolve(
+                step.capability, requested=step.implementation
+            )
             action = getattr(implementation, step.action, None)
             if action is None or not callable(action):
                 raise CapabilityUnavailableError(

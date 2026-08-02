@@ -23,7 +23,7 @@ class FileLogs(LogsCapability):
         file = files.get(environment)
         if not file:
             return []
-        path = Path(file)
+        path = self.resolve_path(file)
         if not path.exists():
             return []
         limit = int(self.config.get("max_lines", 100))

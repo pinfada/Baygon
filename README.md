@@ -205,6 +205,7 @@ $ baygon serve --host 127.0.0.1 --port 8787
 | GET     | `/history`       | intentions exécutées                             |
 | POST    | `/plan`          | `{"intent": "…"}` → plan + explication           |
 | POST    | `/run`           | `{"intent": "…", "approved": bool}` → résultat   |
+| GET     | `/models`        | modèles IA sélectionnables et leur fraîcheur     |
 | POST    | `/reload`        | recharge `baygon.yaml` à chaud (chapitre 10)     |
 
 Un plan sensible renvoie `428` tant que `"approved": true` n'est pas fourni :

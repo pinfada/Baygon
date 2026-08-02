@@ -49,6 +49,8 @@ class Intent:
     parameters: dict[str, Any]
     raw_input: str
     source: str = "shell"
+    #: "rules" (deterministic) or "ai" (classified by the model).
+    resolved_by: str = "rules"
 
 
 @dataclass
@@ -59,6 +61,8 @@ class Step:
     parameters: dict[str, Any] = field(default_factory=dict)
     depends_on: list[str] = field(default_factory=list)
     risk: RiskLevel = RiskLevel.LOW
+    #: Explicitly requested implementation (Registry selection rule 1).
+    implementation: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -68,6 +72,7 @@ class Step:
             "parameters": self.parameters,
             "depends_on": self.depends_on,
             "risk": self.risk.value,
+            "implementation": self.implementation,
         }
 
 
@@ -119,6 +124,8 @@ class Plan:
                 "parameters": self.intent.parameters,
                 "raw_input": self.intent.raw_input,
                 "source": self.intent.source,
+                # Transparency (Article 8): rules or model?
+                "resolved_by": self.intent.resolved_by,
             },
             "risk": self.risk.value,
             "requires_validation": self.requires_validation,
@@ -142,10 +149,24 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
     ("OpenConsole", re.compile(r"\b(ssh|consoles?|terminal)\b", re.IGNORECASE)),
     ("ShowDatabase", re.compile(r"\b(base de donn[ée]es|database|db|postgres|psql)\b", re.IGNORECASE)),
     ("ShowStorage", re.compile(r"\b(stockage|storage|s3|fichiers?|files?)\b", re.IGNORECASE)),
+    ("RestartService", re.compile(r"\b(red[ée]marre\w*|restart|relance[rs]?)\b", re.IGNORECASE)),
+    # Verification questions ("est-ce que X est bien passé ?") ask for a
+    # status, not for logs.
+    ("ShowStatus", re.compile(
+        r"\b(est-ce que|a-t-?il|ont-ils)\b.*\b(bien\s+)?(pass[ée]\w*|r[ée]ussi\w*|termin[ée]\w*|fonctionn\w+)\b",
+        re.IGNORECASE)),
     # Diagnosis comes before the single-source reads: "Pourquoi la
     # production est lente ?" is a full diagnosis (chapter 4), even
-    # though it also mentions slowness.
-    ("Diagnose", re.compile(r"\b(diagnosti\w*|incident|analyse[rs]?|pourquoi|why)\b", re.IGNORECASE)),
+    # though it also mentions slowness. Users describe symptoms rather
+    # than asking for a diagnosis, so symptom reports land here too.
+    ("Diagnose", re.compile(
+        r"\b(diagnosti\w*|incident|analyse[rs]?|pourquoi|why|investigue\w*|examine\w*)\b"
+        r"|\bregarde\b|\bd['’]o[uù] (?:[çc]a|cela) vient\b"
+        r"|\bne (?:peu[xt]|peuvent|répond\w*|marche\w*|fonctionne\w*|d[ée]marre\w*)\s+plus\b"
+        r"|\bn['’](?:arrive\w*|est)\s+plus\b|\bimpossible de\b"
+        r"|\b(?:a|ont)\s+(?:doubl[ée]\w*|tripl[ée]\w*|explos[ée]\w*)\b"
+        r"|\best\s+tomb[ée]\w*\b|\bplante\w*\b|\bcrash\w*\b",
+        re.IGNORECASE)),
     ("ShowLogs", re.compile(r"\b(logs?|journaux|erreurs?|errors?)\b", re.IGNORECASE)),
     ("ShowMetrics", re.compile(r"\b(metrics?|m[ée]triques?|performances?|lente?s?)\b", re.IGNORECASE)),
     ("ShowStatus", re.compile(r"\b(status|statut|[ée]tat)\b", re.IGNORECASE)),
@@ -154,6 +175,13 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
 
 _HOURS = re.compile(r"(\d+)\s*(?:h|heures?|hours?)", re.IGNORECASE)
 
+#: Service named after a restart verb: "redémarre le worker" -> worker.
+_SERVICE = re.compile(
+    r"\b(?:red[ée]marre\w*|restart|relance[rs]?)\s+"
+    r"(?:le |la |les |l['’]|the )?(?P<name>[\w-]+)",
+    re.IGNORECASE,
+)
+
 
 class IntentEngine:
     """Builds plans. Never executes anything."""
@@ -161,16 +189,29 @@ class IntentEngine:
     def __init__(self, config: BaygonConfig, registry: CapabilityRegistry) -> None:
         self._config = config
         self._registry = registry
+        # Session options, set by plan() before the builders run.
+        self._session_ai = True
+        self._session_ai_model: str | None = None
 
     # ------------------------------------------------------------------
     # Intention resolution
     # ------------------------------------------------------------------
 
     def supported_intents(self) -> list[str]:
-        return [name for name, _ in _RULES]
+        return list(dict.fromkeys(name for name, _ in _RULES))
 
-    def resolve(self, text: str, source: str = "shell") -> Intent:
-        """Convert any input form into a single normalized intention."""
+    def resolve(
+        self,
+        text: str,
+        source: str = "shell",
+        ai: bool = True,
+        ai_model: str | None = None,
+    ) -> Intent:
+        """Convert any input form into a single normalized intention.
+
+        `ai=False` forbids any model call (EF-014); `ai_model` targets one
+        declared implementation (Registry rule 1).
+        """
         cleaned = text.strip()
         if not cleaned:
             raise UnknownIntentError(text, self.supported_intents())
@@ -194,11 +235,51 @@ class IntentEngine:
                     raw_input=cleaned,
                     source=source,
                 )
+        # Long tail: the rules found nothing. When an AI capability is
+        # available, let the model classify the request — but only into
+        # a known intention (Article 5: Baygon decides which tools to
+        # use; it never invents an action). Without AI, or when the
+        # model fails or declines, the behaviour is unchanged (EF-014).
+        classified = self._classify_with_ai(cleaned, ai_model) if ai else None
+        if classified is not None:
+            return Intent(
+                name=classified,
+                parameters=self._extract_parameters(cleaned),
+                raw_input=cleaned,
+                source=source,
+                resolved_by="ai",
+            )
         raise UnknownIntentError(text, self.supported_intents())
+
+    def _classify_with_ai(self, text: str, ai_model: str | None = None) -> str | None:
+        if not self._registry.is_available("ai"):
+            return None
+        # An explicitly requested model that does not exist is an error,
+        # not a silent fallback to another one.
+        model = self._registry.resolve("ai", requested=ai_model)
+        known = self.supported_intents()
+        prompt = (
+            "Classify the operator request below into exactly one of these "
+            "intentions, or answer NONE if none fits.\n"
+            "Answer with the intention name only, nothing else.\n\n"
+            "Intentions:\n"
+            + "\n".join(f"- {name}" for name in known)
+            + f"\n\nRequest: {text}\n"
+        )
+        try:
+            answer = model.complete(prompt)
+        except Exception:
+            # An unreachable model must never break intent resolution.
+            return None
+        candidate = str(answer).strip().splitlines()[0].strip().strip(".`\"' ")
+        return candidate if candidate in known else None
 
     def _extract_parameters(self, text: str) -> dict[str, Any]:
         params: dict[str, Any] = {}
         lowered = text.lower()
+        service = _SERVICE.search(text)
+        if service:
+            params["service"] = service.group("name").lower()
         for env in _ENVIRONMENTS:
             if env in lowered or (env == "development" and "dev" in lowered.split()):
                 params["environment"] = env
@@ -217,12 +298,27 @@ class IntentEngine:
     # Plan construction
     # ------------------------------------------------------------------
 
-    def plan(self, text: str, source: str = "shell") -> Plan:
-        intent = self.resolve(text, source=source)
+    def plan(
+        self,
+        text: str,
+        source: str = "shell",
+        ai: bool = True,
+        ai_model: str | None = None,
+    ) -> Plan:
+        intent = self.resolve(text, source=source, ai=ai, ai_model=ai_model)
+        self._session_ai = ai
+        self._session_ai_model = ai_model
         builder = getattr(self, f"_plan_{_snake(intent.name)}")
         built = builder(intent)
-        steps, reasoning = built[0], built[1]
+        steps, reasoning = built[0], list(built[1])
         extras = built[2] if len(built) > 2 else {}
+        if intent.resolved_by == "ai":
+            # Transparency (Article 8): say how the intention was found.
+            reasoning.insert(
+                0,
+                "Intention identified by the AI model: the deterministic rules "
+                "did not match this phrasing",
+            )
         return Plan(
             id=_plan_id(intent),
             intent=intent,
@@ -264,6 +360,18 @@ class IntentEngine:
                   parameters={"environment": env}, risk=risk)],
             [f"Rollback requested on environment {env}",
              "Rollback modifies a deployed environment, validation applies to production"],
+        )
+
+    def _plan_restart_service(self, intent: Intent) -> tuple[list[Step], list[str]]:
+        env = intent.parameters["environment"]
+        service = intent.parameters.get("service", "")
+        risk = RiskLevel.HIGH if env == "production" else RiskLevel.MEDIUM
+        return (
+            [Step(id="1", capability="service", action="restart",
+                  parameters={"service": service, "environment": env}, risk=risk)],
+            [f"Restarting service {service!r} on {env}: the declared supervisor "
+             "performs the restart, Baygon only asks for it",
+             "The operation is gated by the 'restart' permission"],
         )
 
     def _plan_open_console(self, intent: Intent) -> tuple[list[Step], list[str]]:
@@ -439,17 +547,23 @@ class IntentEngine:
             Step(id="3", capability="deployment", action="status",
                  parameters={"environment": env}, risk=RiskLevel.LOW),
         ]
-        if self._registry.is_available("ai"):
+        if self._session_ai and self._registry.is_available("ai"):
+            chosen = self._session_ai_model
             reasoning.append(
-                "AI capability available: the gathered context is sent to the model for analysis"
+                "AI capability available: the gathered context is sent to "
+                + (f"the {chosen!r} model" if chosen else "the model")
+                + " for analysis"
             )
             steps.append(
                 Step(id="4", capability="ai", action="complete",
                      parameters={"prompt": f"Diagnose the state of {self._config.project_name} on {env}"},
-                     depends_on=["1", "2", "3"], risk=RiskLevel.LOW)
+                     depends_on=["1", "2", "3"], risk=RiskLevel.LOW,
+                     implementation=chosen)
             )
         else:
-            reasoning.append("No AI capability available: raw context is returned (degraded mode)")
+            reasoning.append(
+                "No AI used: raw context is returned (degraded mode, EF-014)"
+            )
         return steps, reasoning
 
 

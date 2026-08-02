@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import abc
 import enum
+from pathlib import Path
 from typing import Any
 
 
@@ -38,9 +39,26 @@ class CapabilityImplementation(abc.ABC):
     author: str = ""
     license: str = ""
 
+    #: Directory holding the baygon.yaml that declared this provider.
+    #: Set by the Plugin Manager; ``None`` means "resolve like the caller".
+    project_dir: Path | None = None
+
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         self.config = config or {}
         self.state = ImplementationState.UNKNOWN
+
+    def resolve_path(self, value: Any, default: str = ".") -> Path:
+        """Interpret a declared path relative to the project, not the caller.
+
+        A project declares its paths in its own baygon.yaml, so they mean
+        "next to that file" — whatever directory the Shell runs from. This
+        is what keeps projects independent when several are managed at
+        once (chapter 3). Absolute paths are left untouched.
+        """
+        path = Path(str(value) if value is not None else default)
+        if path.is_absolute() or self.project_dir is None:
+            return path
+        return self.project_dir / path
 
     def health_check(self) -> bool:
         """Return True when the implementation is usable. Override if needed."""
@@ -199,6 +217,19 @@ class DeveloperCapability(CapabilityImplementation):
     def fix(self, description: str, feedback: str | None = None, **params: Any) -> dict[str, Any]: ...
 
 
+class ServiceCapability(CapabilityImplementation):
+    """Process/service lifecycle (restart a worker, an API, ...).
+
+    Baygon does not manage processes itself: it asks the declared
+    supervisor (systemd, Docker, the cloud provider, ...) to act.
+    """
+
+    capability = "service"
+
+    @abc.abstractmethod
+    def restart(self, service: str, environment: str, **params: Any) -> dict[str, Any]: ...
+
+
 class ReviewCapability(CapabilityImplementation):
     """Publication of work for human review.
 
@@ -221,6 +252,20 @@ class AICapability(CapabilityImplementation):
     @abc.abstractmethod
     def complete(self, prompt: str, context: dict[str, Any] | None = None, **params: Any) -> str: ...
 
+    def describe(self) -> dict[str, Any]:
+        """Model identity and freshness, best effort.
+
+        `up_to_date` is True/False when the provider can be asked which
+        models it currently serves, and None when it cannot — freshness
+        is informative, never a dependency (ENF-006).
+        """
+        return {
+            "identifier": self.identifier,
+            "model": self.config.get("model"),
+            "up_to_date": None,
+            "known_models": [],
+        }
+
 
 #: Contract expected for each capability name. The registry rejects an
 #: implementation that does not honour the contract of its capability.
@@ -239,6 +284,7 @@ CAPABILITY_CONTRACTS: dict[str, type[CapabilityImplementation]] = {
         WorkspaceCapability,
         DeveloperCapability,
         ReviewCapability,
+        ServiceCapability,
         BackupCapability,
         RecoveryCapability,
         AICapability,

@@ -16,6 +16,31 @@ from baygon.core.errors import BaygonError, UnknownProjectError
 from baygon.core.kernel import Kernel
 
 
+class SingleProject:
+    """One project behind the same interface as ProjectManager.
+
+    Lets every interface (terminal, API, web) talk to one abstraction,
+    whether the Shell serves one application or several.
+    """
+
+    def __init__(self, kernel: Kernel) -> None:
+        self._kernel = kernel
+        self.failures: dict[str, str] = dict(kernel.plugins.failures)
+
+    def projects(self) -> list[str]:
+        return [self._kernel.config.project_name]
+
+    def kernel(self, name: str) -> Kernel:
+        if name != self._kernel.config.project_name:
+            raise UnknownProjectError(name, self.projects())
+        return self._kernel
+
+    def resolve(self, text: str = "", explicit: str | None = None) -> Kernel:
+        if explicit is not None:
+            return self.kernel(explicit)
+        return self._kernel
+
+
 class ProjectManager:
     def __init__(self) -> None:
         self._kernels: dict[str, Kernel] = {}

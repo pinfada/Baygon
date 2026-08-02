@@ -56,7 +56,7 @@ class CodingAgent(DeveloperCapability):
             args,
             capture_output=True,
             text=True,
-            cwd=str(self.config.get("cwd", ".")),
+            cwd=str(self.resolve_path(self.config.get("cwd"))),
             timeout=int(self.config.get("timeout_seconds", 1800)),
         )
         if completed.returncode != 0:
@@ -81,7 +81,13 @@ class CodingAgent(DeveloperCapability):
 
     def health_check(self) -> bool:
         command = self.config.get("command")
-        return bool(command) and shutil.which(str(command[0])) is not None
+        if not command:
+            return False
+        program = str(command[0])
+        # A relative program (e.g. ./agent.sh) belongs to the project.
+        if program.startswith("."):
+            return shutil.which(str(self.resolve_path(program))) is not None
+        return shutil.which(program) is not None
 
     def fix(self, description: str, feedback: str | None = None, **params: Any) -> dict[str, Any]:
         prompt = description

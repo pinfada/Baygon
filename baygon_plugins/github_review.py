@@ -43,7 +43,7 @@ class GitHubReview(ReviewCapability):
 
     def _git(self, args: list[str]) -> str:
         completed = subprocess.run(
-            ["git", "-C", str(self.config.get("cwd", ".")), *args],
+            ["git", "-C", str(self.resolve_path(self.config.get("cwd"))), *args],
             capture_output=True, text=True, timeout=120,
         )
         if completed.returncode != 0:
