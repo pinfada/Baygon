@@ -21,9 +21,24 @@ from baygon.core.context import ContextEngine
 from baygon.core.errors import BaygonError, ValidationRequiredError
 from baygon.core.events import EventBus
 from baygon.core.executor import ExecutionEngine, ExecutionResult
-from baygon.core.intent import IntentEngine, Plan
+from baygon.core.intent import IntentEngine, Plan, Step
 from baygon.core.plugins import PluginManager
 from baygon.core.registry import CapabilityRegistry
+
+
+def _plan_with_feedback(plan: Plan, feedback: str) -> Plan:
+    """Copy of the plan with the failure report injected into the
+    feedback step's parameters. Same id: it is the same intention."""
+    steps = []
+    for step in plan.steps:
+        parameters = dict(step.parameters)
+        if step.id == plan.feedback_step:
+            parameters["feedback"] = feedback
+        steps.append(Step(id=step.id, capability=step.capability, action=step.action,
+                          parameters=parameters, depends_on=list(step.depends_on),
+                          risk=step.risk))
+    return Plan(id=plan.id, intent=plan.intent, steps=steps, reasoning=plan.reasoning,
+                max_rounds=plan.max_rounds, feedback_step=plan.feedback_step)
 
 
 class Kernel:
@@ -94,13 +109,35 @@ class Kernel:
         approved: bool = False,
         completed: dict[str, Any] | None = None,
     ) -> ExecutionResult:
-        try:
-            result = self.executor.execute(plan, approved=approved, completed=completed)
-        except ValidationRequiredError:
-            self.audit.record(plan, None, status="suspended")
-            raise
-        self.audit.record(plan, result, status="success" if result.success else "failure")
-        self.bus.publish(events.COMMAND_EXECUTED, plan=plan.id, success=result.success)
+        """Execute a plan, honouring its bounded retry policy.
+
+        When the plan declares `max_rounds` > 1 and a `feedback_step`, a
+        failed round is retried with the failure report injected as
+        feedback to that step — the Dev -> QA correction loop. Every
+        round is audited.
+        """
+        attempt = 0
+        current = plan
+        while True:
+            attempt += 1
+            try:
+                result = self.executor.execute(
+                    current, approved=approved,
+                    completed=completed if attempt == 1 else None,
+                )
+            except ValidationRequiredError:
+                self.audit.record(plan, None, status="suspended")
+                raise
+            self.audit.record(current, result, status="success" if result.success else "failure")
+            self.bus.publish(events.COMMAND_EXECUTED, plan=current.id, success=result.success)
+            if (
+                result.success
+                or plan.feedback_step is None
+                or attempt >= max(1, plan.max_rounds)
+            ):
+                break
+            feedback = (result.failure or {}).get("cause", "previous round failed")
+            current = _plan_with_feedback(plan, str(feedback))
         if not result.success:
             self._notify_failure(plan, result)
         return result

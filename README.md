@@ -86,6 +86,28 @@ Côté observabilité, deux adaptateurs réels : **Loki** pour la capacité `log
 (requêtes PromQL avec substitution de l'environnement). Baygon consulte, il ne
 stocke jamais (EF-007).
 
+**Boucle Dev → QA** : « Résous le bug de paiement » déclenche l'intention
+`FixBug` — l'agent codeur (capacité `developer`) produit la correction,
+Baygon exécute la commande `test` déclarée comme contrôle qualité
+indépendant, et en cas d'échec le rapport QA est réinjecté à l'agent pour une
+nouvelle tentative (3 rondes maximum, chacune auditée). Succès → notification
+« Bug résolu et validé par Baygon » ; échec final → notification d'échec.
+Baygon ne modifie jamais le code lui-même et **ne favorise aucun agent**
+(ENF-019) : il n'y a pas d'agent par défaut, la commande est déclarée dans
+`baygon.yaml` — Claude Code, Aider, Codex CLI, Gemini CLI ou tout autre CLI,
+au choix, via le même gabarit `{prompt}` :
+
+```yaml
+  dev:
+    type: developer
+    plugin: baygon_plugins.coding_agent:CodingAgent
+    options:
+      command: ["claude", "-p", "{prompt}"]              # ou :
+      # command: ["aider", "--message", "{prompt}", "--yes"]
+      # command: ["codex", "exec", "{prompt}"]
+      # command: ["gemini", "-p", "{prompt}"]
+```
+
 Côté notifications, deux adaptateurs réels : **Slack** (webhook entrant, URL
 lue dans `SLACK_WEBHOOK_URL`) et **e-mail** (SMTP, mot de passe dans
 `SMTP_PASSWORD`). Et le noyau notifie automatiquement **tout échec
@@ -100,9 +122,15 @@ un changement de `baygon.yaml`, jamais de code. Le déploiement en production
 (systemd + reverse proxy TLS) est documenté dans
 [`docs/11-deploiement.md`](docs/11-deploiement.md).
 
-Deux autres adaptateurs réels sont fournis : **Claude** pour la capacité `ai`
-(SDK officiel `anthropic`, installable via `pip install baygon[claude]`, clé
-lue dans `ANTHROPIC_API_KEY`) et **Render** pour la capacité `deployment`
+Pour la capacité `ai`, trois adaptateurs : **Claude** (SDK officiel
+`anthropic`, `pip install baygon[claude]`, clé dans `ANTHROPIC_API_KEY`),
+**compatible chat-completions** — un seul adaptateur pour **DeepSeek, Llama et
+Qwen via Ollama, vLLM, Mistral, Groq et tout modèle local ou open source**
+(`base_url` + `model` déclarés, clé optionnelle car les endpoints locaux n'en
+demandent pas) — et l'**IA hors-ligne** (l'IA n'est jamais obligatoire).
+Aucun défaut de fournisseur, nulle part.
+
+Autre adaptateur réel : **Render** pour la capacité `deployment`
 (API REST, clé dans `RENDER_API_KEY`, services mappés par environnement dans
 `baygon.yaml`). Passer de l'IA hors-ligne à Claude — ou de Render à un autre
 cloud — ne demande qu'une modification de configuration : le noyau ne change
