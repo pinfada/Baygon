@@ -86,6 +86,13 @@ Côté observabilité, deux adaptateurs réels : **Loki** pour la capacité `log
 (requêtes PromQL avec substitution de l'environnement). Baygon consulte, il ne
 stocke jamais (EF-007).
 
+Côté notifications, deux adaptateurs réels : **Slack** (webhook entrant, URL
+lue dans `SLACK_WEBHOOK_URL`) et **e-mail** (SMTP, mot de passe dans
+`SMTP_PASSWORD`). Et le noyau notifie automatiquement **tout échec
+d'exécution** (plan, étape, cause) dès qu'une capacité `notification` est
+configurée — sans jamais masquer le résultat structuré si le notificateur est
+lui-même en panne.
+
 L'interchangeabilité promise par les documents est démontrée par des paires
 réelles : **GitHub ↔ GitLab** pour `repository`, **Render ↔ Fly.io** pour
 `deployment` (l'exemple littéral du chapitre 8) — passer de l'un à l'autre est
