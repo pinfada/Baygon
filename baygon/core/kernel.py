@@ -101,7 +101,27 @@ class Kernel:
             raise
         self.audit.record(plan, result, status="success" if result.success else "failure")
         self.bus.publish(events.COMMAND_EXECUTED, plan=plan.id, success=result.success)
+        if not result.success:
+            self._notify_failure(plan, result)
         return result
+
+    def _notify_failure(self, plan: Plan, result: ExecutionResult) -> None:
+        """Best-effort failure notification (ENF-008): a failed plan is an
+        event the team should see. Never breaks the structured result."""
+        try:
+            notifier = self.registry.resolve("notification")
+        except BaygonError:
+            return
+        failure = result.failure or {}
+        message = (
+            f"[baygon] plan {plan.id} ({plan.intent.name}) failed at step "
+            f"{failure.get('step')}: {failure.get('cause')}"
+        )
+        try:
+            notifier.notify(message)
+        except Exception:
+            # An unreachable notifier must never mask the real failure.
+            return
 
     def resume(self, plan_id: str | None = None, approved: bool = False) -> ExecutionResult:
         """Resume the last failed execution (ENF-017).
