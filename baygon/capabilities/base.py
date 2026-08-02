@@ -199,6 +199,20 @@ class DeveloperCapability(CapabilityImplementation):
     def fix(self, description: str, feedback: str | None = None, **params: Any) -> dict[str, Any]: ...
 
 
+class ReviewCapability(CapabilityImplementation):
+    """Publication of work for human review.
+
+    Pushes a branch and opens a pull/merge request through the Git
+    provider. Outward-facing by nature: plans that publish are
+    sensitive and require explicit validation (Article 9).
+    """
+
+    capability = "review"
+
+    @abc.abstractmethod
+    def publish(self, title: str, body: str = "", **params: Any) -> dict[str, Any]: ...
+
+
 class AICapability(CapabilityImplementation):
     """Reasoning. Optional: Baygon must stay fully usable without it."""
 
@@ -224,6 +238,7 @@ CAPABILITY_CONTRACTS: dict[str, type[CapabilityImplementation]] = {
         StorageCapability,
         WorkspaceCapability,
         DeveloperCapability,
+        ReviewCapability,
         BackupCapability,
         RecoveryCapability,
         AICapability,

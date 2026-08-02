@@ -15,6 +15,7 @@ from baygon.capabilities import (
     NotificationCapability,
     RecoveryCapability,
     RepositoryCapability,
+    ReviewCapability,
     WorkspaceCapability,
 )
 
@@ -177,6 +178,25 @@ class GatedWorkspace(WorkspaceCapability):
         if FIXBUG_STATE["attempts"] < FIXBUG_STATE["fixed_after"]:
             raise RuntimeError("2 tests failed: test_refund, test_checkout")
         return {"command": command, "exit_code": 0}
+
+
+class FakeReview(ReviewCapability):
+    identifier = "fake-review"
+
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        super().__init__(config)
+        self.published: list[dict[str, Any]] = []
+
+    def publish(self, title: str, body: str = "", **params: Any) -> dict[str, Any]:
+        entry = {
+            "title": title,
+            "body": body,
+            "branch": f"baygon/fix-{len(self.published) + 1}",
+            "url": f"https://git.example/pull/{len(self.published) + 1}",
+            "state": "published",
+        }
+        self.published.append(entry)
+        return entry
 
 
 class FakeNotification(NotificationCapability):

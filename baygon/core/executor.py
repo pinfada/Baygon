@@ -16,6 +16,7 @@ as a structured result.
 from __future__ import annotations
 
 import datetime
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -36,6 +37,7 @@ _PERMISSION_BY_ACTION = {
     ("deployment", "rollback"): "deploy",
     ("database", "info"): "database",
     ("ssh", "command"): "ssh",
+    ("review", "publish"): "publish",
 }
 
 
@@ -79,6 +81,25 @@ class ExecutionResult:
 
 def _now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+#: `{{step_id.field}}` in a string parameter is replaced by that field of
+#: the referenced step's output (chapter 9: reuse available results).
+_REFERENCE = re.compile(r"\{\{(\w+)\.(\w+)\}\}")
+
+
+def _resolve_references(parameters: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]:
+    def substitute(match: re.Match[str]) -> str:
+        step_id, field = match.group(1), match.group(2)
+        source = outputs.get(step_id)
+        if isinstance(source, dict) and field in source:
+            return str(source[field])
+        return ""
+
+    return {
+        key: (_REFERENCE.sub(substitute, value) if isinstance(value, str) else value)
+        for key, value in parameters.items()
+    }
 
 
 class ExecutionEngine:
@@ -183,6 +204,10 @@ class ExecutionEngine:
                 f"operation {operation!r} is not allowed by the project permissions",
                 [f"declare 'permissions.{operation}: true' in baygon.yaml"],
             )
+        if operation:
+            # The step declares its own permission: it governs the step,
+            # the production gate below does not also apply.
+            return
         if step.risk is RiskLevel.HIGH and not self._config.is_allowed("production"):
             raise StepExecutionError(
                 step.id,
@@ -200,7 +225,7 @@ class ExecutionEngine:
                     step.capability,
                     f"implementation {implementation.identifier!r} has no action {step.action!r}",
                 )
-            parameters = dict(step.parameters)
+            parameters = _resolve_references(dict(step.parameters), outputs)
             if step.depends_on:
                 # Reuse results already available from previous steps.
                 parameters["context"] = {dep: outputs.get(dep) for dep in step.depends_on}

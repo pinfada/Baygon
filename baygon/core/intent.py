@@ -135,6 +135,7 @@ _ENVIRONMENTS = ("production", "staging", "development")
 _RULES: list[tuple[str, re.Pattern[str]]] = [
     ("DeployProject", re.compile(r"\b(deploy|d[ée]ploie[rs]?)\b", re.IGNORECASE)),
     ("RollbackDeployment", re.compile(r"\b(rollback|reviens|annule le d[ée]ploiement)\b", re.IGNORECASE)),
+    ("ProposeChanges", re.compile(r"\b(propose[rs]?|revue|review|pull request|merge request|pr)\b", re.IGNORECASE)),
     ("FixBug", re.compile(r"\b(r[ée]sous|corrige[rs]?|r[ée]pare[rs]?|fix)\b", re.IGNORECASE)),
     ("BackupProject", re.compile(r"\b(backup|sauvegarde\w*)\b", re.IGNORECASE)),
     ("RestoreProject", re.compile(r"\b(restore|restaure\w*|restauration)\b", re.IGNORECASE)),
@@ -323,6 +324,18 @@ class IntentEngine:
             ["Repository history is a read-only action"],
         )
 
+    def _plan_propose_changes(self, intent: Intent) -> tuple[list[Step], list[str]]:
+        description = intent.raw_input
+        return (
+            [Step(id="1", capability="review", action="publish",
+                  parameters={"title": _title_from(description),
+                              "body": f"Proposé par Baygon depuis l'intention : {description}"},
+                  risk=RiskLevel.HIGH)],
+            ["Publishing pushes a branch and opens a review request: the change "
+             "leaves the machine, so explicit validation is required (Article 9)",
+             "The operation is gated by the 'publish' permission"],
+        )
+
     def _plan_fix_bug(self, intent: Intent):
         env = intent.parameters["environment"]
         description = intent.raw_input
@@ -335,30 +348,45 @@ class IntentEngine:
                  parameters={"description": description}, risk=RiskLevel.MEDIUM),
         ]
         test_command = self._config.commands.get("test")
-        if test_command is not None:
-            reasoning.append(
-                "Independent QA: Baygon runs the declared 'test' command to validate the fix; "
-                "on failure the QA report is fed back to the agent (bounded rounds)"
-            )
-            steps.append(
-                Step(id="2", capability="workspace", action="execute",
-                     parameters={"command": "test", "command_line": str(test_command),
-                                 "environment": env},
-                     depends_on=["1"], risk=RiskLevel.MEDIUM)
-            )
-            if self._registry.is_available("notification"):
-                steps.append(
-                    Step(id="3", capability="notification", action="notify",
-                         parameters={"message":
-                                     f"Bug résolu et validé par Baygon — {description}"},
-                         depends_on=["2"], risk=RiskLevel.LOW)
-                )
-        else:
+        if test_command is None:
             reasoning.append(
                 "No declared 'test' command in baygon.yaml: the fix cannot be "
                 "independently verified, single attempt only"
             )
             return steps, reasoning
+
+        reasoning.append(
+            "Independent QA: Baygon runs the declared 'test' command to validate the fix; "
+            "on failure the QA report is fed back to the agent (bounded rounds)"
+        )
+        steps.append(
+            Step(id="2", capability="workspace", action="execute",
+                 parameters={"command": "test", "command_line": str(test_command),
+                             "environment": env},
+                 depends_on=["1"], risk=RiskLevel.MEDIUM)
+        )
+        message = f"Bug résolu et validé par Baygon — {description}"
+        last_step = "2"
+        if self._registry.is_available("review"):
+            reasoning.append(
+                "Review capability available: the validated fix is published for human "
+                "review, which makes the plan sensitive (explicit validation required)"
+            )
+            steps.append(
+                Step(id="3", capability="review", action="publish",
+                     parameters={"title": _title_from(description),
+                                 "body": "Correction produite par l'agent et validée "
+                                         "par la commande de test déclarée."},
+                     depends_on=["2"], risk=RiskLevel.HIGH)
+            )
+            last_step = "3"
+            message += "\n{{3.url}}"  # resolved from the publication result
+        if self._registry.is_available("notification"):
+            steps.append(
+                Step(id=str(int(last_step) + 1), capability="notification", action="notify",
+                     parameters={"message": message},
+                     depends_on=[last_step], risk=RiskLevel.LOW)
+            )
         return steps, reasoning, {"max_rounds": 3, "feedback_step": "1"}
 
     def _plan_run_command(self, intent: Intent) -> tuple[list[Step], list[str]]:
@@ -423,6 +451,11 @@ class IntentEngine:
         else:
             reasoning.append("No AI capability available: raw context is returned (degraded mode)")
         return steps, reasoning
+
+
+def _title_from(description: str) -> str:
+    """First line of the intention, trimmed, as a review request title."""
+    return description.strip().splitlines()[0][:72] if description.strip() else "Baygon"
 
 
 def _snake(name: str) -> str:
