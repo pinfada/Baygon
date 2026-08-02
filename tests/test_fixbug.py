@@ -124,6 +124,38 @@ class CodingAgentAdapterTest(unittest.TestCase):
         self.assertIn("paiement", adapter.commands[0][2])
         self.assertEqual(result["state"], "patched")
 
+    def test_no_vendor_default_the_agent_command_must_be_declared(self) -> None:
+        # ENF-019: Baygon favors no AI provider. Without an explicit
+        # command the adapter is unavailable and says why.
+        from baygon_plugins.coding_agent import CodingAgent
+
+        adapter = CodingAgent({})
+        self.assertFalse(adapter.health_check())
+        with self.assertRaisesRegex(ValueError, "command"):
+            adapter.fix("corrige le bug")
+
+    def test_any_agent_cli_works_through_the_same_template(self) -> None:
+        from baygon_plugins.coding_agent import CodingAgent
+
+        class FakeAgent(CodingAgent):
+            def __init__(self, config=None):
+                super().__init__(config)
+                self.commands = []
+
+            def _run(self, args):
+                self.commands.append(args)
+                return "done"
+
+        for template in (
+            ["claude", "-p", "{prompt}"],
+            ["aider", "--message", "{prompt}", "--yes"],
+            ["codex", "exec", "{prompt}"],
+            ["gemini", "-p", "{prompt}"],
+        ):
+            agent = FakeAgent({"command": template})
+            agent.fix("répare le paiement")
+            self.assertIn("paiement", " ".join(agent.commands[-1]))
+
     def test_feedback_is_appended_to_the_prompt(self) -> None:
         from baygon_plugins.coding_agent import CodingAgent
 
