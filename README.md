@@ -86,12 +86,15 @@ Côté observabilité, deux adaptateurs réels : **Loki** pour la capacité `log
 (requêtes PromQL avec substitution de l'environnement). Baygon consulte, il ne
 stocke jamais (EF-007).
 
-**Boucle Dev → QA** : « Résous le bug de paiement » déclenche l'intention
-`FixBug` — l'agent codeur (capacité `developer`) produit la correction,
-Baygon exécute la commande `test` déclarée comme contrôle qualité
+**Boucle Dev → QA → Revue** : « Résous le bug de paiement » déclenche
+l'intention `FixBug` — l'agent codeur (capacité `developer`) produit la
+correction, Baygon exécute la commande `test` déclarée comme contrôle qualité
 indépendant, et en cas d'échec le rapport QA est réinjecté à l'agent pour une
-nouvelle tentative (3 rondes maximum, chacune auditée). Succès → notification
-« Bug résolu et validé par Baygon » ; échec final → notification d'échec.
+nouvelle tentative (3 rondes maximum, chacune auditée). Si une capacité
+`review` est configurée, la correction validée est **publiée pour revue
+humaine** (branche + pull request) — ce qui rend le plan sensible : rien ne
+quitte la machine sans validation explicite (`--yes`) et sans la permission
+`publish`. La notification finale porte le lien de la revue.
 Baygon ne modifie jamais le code lui-même et **ne favorise aucun agent**
 (ENF-019) : il n'y a pas d'agent par défaut, la commande est déclarée dans
 `baygon.yaml` — Claude Code, Aider, Codex CLI, Gemini CLI ou tout autre CLI,
