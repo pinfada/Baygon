@@ -75,7 +75,9 @@ class PluginManager:
                     f"{provider.type!r} but the plugin provides "
                     f"{implementation.capability!r}"
                 )
-            self._registry.register(implementation, default=provider.default)
+            self._registry.register(
+                implementation, default=provider.default, name=provider.name
+            )
         except Exception as exc:
             # Isolate the failure: record it, publish it, keep going.
             self.failures[provider.name] = str(exc)

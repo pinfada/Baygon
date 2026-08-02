@@ -37,7 +37,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
+    parser.add_argument(
+        "--no-ai", action="store_true",
+        help="deterministic rules only: never call an AI model (EF-014)",
+    )
+    parser.add_argument(
+        "--model", metavar="NAME", default=None,
+        help="use this declared AI model (see `baygon models`)",
+    )
     sub.add_parser("projects", help="list the managed projects")
+    sub.add_parser("models", help="list the AI models this session may choose")
     sub.add_parser("validate", help="validate baygon.yaml")
     sub.add_parser("capabilities", help="list available capabilities and implementations")
     sub.add_parser("context", help="show the project context built by the Context Engine")
@@ -132,6 +141,14 @@ def _dispatch(kernel: Kernel, args: argparse.Namespace) -> int:
         print(json.dumps(kernel.capabilities(), indent=2, ensure_ascii=False))
         return 0
 
+    if args.command == "models":
+        for entry in kernel.models():
+            freshness = {True: "à jour", False: "OBSOLÈTE", None: "inconnu"}[entry["up_to_date"]]
+            model = entry.get("model") or "—"
+            print(f"{entry['name']:<20} {model:<24} {entry['adapter']:<20} "
+                  f"{entry['state']:<8} {freshness}")
+        return 0
+
     if args.command == "context":
         print(json.dumps(kernel.context(), indent=2, ensure_ascii=False))
         return 0
@@ -154,12 +171,12 @@ def _dispatch(kernel: Kernel, args: argparse.Namespace) -> int:
         return 0
 
     if args.command in ("plan", "explain"):
-        plan = kernel.plan(args.intent)
+        plan = kernel.plan(args.intent, ai=not args.no_ai, ai_model=args.model)
         print(plan.explain())
         return 0
 
     if args.command == "run":
-        plan = kernel.plan(args.intent)
+        plan = kernel.plan(args.intent, ai=not args.no_ai, ai_model=args.model)
         if plan.requires_validation and not args.yes:
             print(plan.explain())
             print("\nThis plan contains sensitive actions.", file=sys.stderr)

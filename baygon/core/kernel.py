@@ -92,16 +92,50 @@ class Kernel:
     # Public operations, used by every interface (terminal, API, ...)
     # ------------------------------------------------------------------
 
-    def plan(self, text: str, source: str = "shell") -> Plan:
-        plan = self.intent_engine.plan(text, source=source)
+    def plan(
+        self,
+        text: str,
+        source: str = "shell",
+        ai: bool = True,
+        ai_model: str | None = None,
+    ) -> Plan:
+        plan = self.intent_engine.plan(text, source=source, ai=ai, ai_model=ai_model)
         self.bus.publish(
             events.PLAN_CREATED, plan=plan.id, intent=plan.intent.name, risk=plan.risk.value
         )
         return plan
 
-    def run(self, text: str, approved: bool = False, source: str = "shell") -> ExecutionResult:
-        plan = self.plan(text, source=source)
+    def run(
+        self,
+        text: str,
+        approved: bool = False,
+        source: str = "shell",
+        ai: bool = True,
+        ai_model: str | None = None,
+    ) -> ExecutionResult:
+        plan = self.plan(text, source=source, ai=ai, ai_model=ai_model)
         return self.execute(plan, approved=approved)
+
+    def models(self) -> list[dict[str, Any]]:
+        """Models this session may choose from, with their freshness.
+
+        The configuration declares what is available; the caller picks
+        among them (Registry rule 1). Freshness is best effort.
+        """
+        entries = []
+        for metadata in self.capabilities().get("ai", []):
+            name = metadata["name"]
+            entry = {"name": name, "adapter": metadata["identifier"],
+                     "state": metadata["state"], "model": None,
+                     "up_to_date": None, "known_models": []}
+            try:
+                described = self.registry.resolve("ai", requested=name).describe()
+            except Exception:
+                entries.append(entry)  # an unavailable model is still worth listing
+                continue
+            entry.update({k: v for k, v in described.items() if k != "identifier"})
+            entries.append(entry)
+        return entries
 
     def execute(
         self,

@@ -118,6 +118,33 @@ jamais d'autre, et le plan indique alors que l'intention a été identifiée par
 l'IA. Sans IA, le comportement est inchangé : une erreur claire listant les
 intentions connues (EF-014).
 
+### Choisir le mode et le modèle, à chaque session
+
+La configuration déclare **quels** modèles existent ; vous choisissez lequel
+utiliser au moment de vous connecter (règle 1 du Capability Registry :
+« implémentation explicitement demandée »).
+
+```console
+$ baygon models          # que puis-je choisir, et est-ce à jour ?
+llama-a-jour   llama3    openai-compatible  ACTIVE   à jour
+llama-perime   llama2    openai-compatible  ACTIVE   OBSOLÈTE
+
+$ baygon --no-ai run "..."                  # règles déterministes seules
+$ baygon --model llama-a-jour run "..."     # ce modèle-là
+```
+
+Le nom sélectionnable est celui **que vous avez déclaré** dans `baygon.yaml`
+(`llama-a-jour`), pas celui de l'adaptateur — un même adaptateur générique
+peut servir plusieurs modèles. La colonne de fraîcheur interroge le
+fournisseur : `à jour`, `OBSOLÈTE` si le modèle n'y figure plus, `inconnu` si
+le fournisseur ne sait pas répondre — la fraîcheur informe, elle ne bloque
+jamais (ENF-006).
+
+Sur la page web et l'API, mêmes possibilités : un sélecteur **Mode IA / Sans
+IA**, une liste de modèles alimentée par `GET /models` avec avertissement si
+l'un d'eux est obsolète, et les champs `"ai": false` / `"model": "..."` dans
+les requêtes `POST /plan` et `POST /run`.
+
 Règles à retenir :
 
 - risque LOW/MEDIUM → exécution directe ;

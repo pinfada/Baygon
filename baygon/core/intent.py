@@ -61,6 +61,8 @@ class Step:
     parameters: dict[str, Any] = field(default_factory=dict)
     depends_on: list[str] = field(default_factory=list)
     risk: RiskLevel = RiskLevel.LOW
+    #: Explicitly requested implementation (Registry selection rule 1).
+    implementation: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -70,6 +72,7 @@ class Step:
             "parameters": self.parameters,
             "depends_on": self.depends_on,
             "risk": self.risk.value,
+            "implementation": self.implementation,
         }
 
 
@@ -184,16 +187,29 @@ class IntentEngine:
     def __init__(self, config: BaygonConfig, registry: CapabilityRegistry) -> None:
         self._config = config
         self._registry = registry
+        # Session options, set by plan() before the builders run.
+        self._session_ai = True
+        self._session_ai_model: str | None = None
 
     # ------------------------------------------------------------------
     # Intention resolution
     # ------------------------------------------------------------------
 
     def supported_intents(self) -> list[str]:
-        return [name for name, _ in _RULES]
+        return list(dict.fromkeys(name for name, _ in _RULES))
 
-    def resolve(self, text: str, source: str = "shell") -> Intent:
-        """Convert any input form into a single normalized intention."""
+    def resolve(
+        self,
+        text: str,
+        source: str = "shell",
+        ai: bool = True,
+        ai_model: str | None = None,
+    ) -> Intent:
+        """Convert any input form into a single normalized intention.
+
+        `ai=False` forbids any model call (EF-014); `ai_model` targets one
+        declared implementation (Registry rule 1).
+        """
         cleaned = text.strip()
         if not cleaned:
             raise UnknownIntentError(text, self.supported_intents())
@@ -222,7 +238,7 @@ class IntentEngine:
         # a known intention (Article 5: Baygon decides which tools to
         # use; it never invents an action). Without AI, or when the
         # model fails or declines, the behaviour is unchanged (EF-014).
-        classified = self._classify_with_ai(cleaned)
+        classified = self._classify_with_ai(cleaned, ai_model) if ai else None
         if classified is not None:
             return Intent(
                 name=classified,
@@ -233,9 +249,12 @@ class IntentEngine:
             )
         raise UnknownIntentError(text, self.supported_intents())
 
-    def _classify_with_ai(self, text: str) -> str | None:
+    def _classify_with_ai(self, text: str, ai_model: str | None = None) -> str | None:
         if not self._registry.is_available("ai"):
             return None
+        # An explicitly requested model that does not exist is an error,
+        # not a silent fallback to another one.
+        model = self._registry.resolve("ai", requested=ai_model)
         known = self.supported_intents()
         prompt = (
             "Classify the operator request below into exactly one of these "
@@ -246,7 +265,7 @@ class IntentEngine:
             + f"\n\nRequest: {text}\n"
         )
         try:
-            answer = self._registry.resolve("ai").complete(prompt)
+            answer = model.complete(prompt)
         except Exception:
             # An unreachable model must never break intent resolution.
             return None
@@ -277,8 +296,16 @@ class IntentEngine:
     # Plan construction
     # ------------------------------------------------------------------
 
-    def plan(self, text: str, source: str = "shell") -> Plan:
-        intent = self.resolve(text, source=source)
+    def plan(
+        self,
+        text: str,
+        source: str = "shell",
+        ai: bool = True,
+        ai_model: str | None = None,
+    ) -> Plan:
+        intent = self.resolve(text, source=source, ai=ai, ai_model=ai_model)
+        self._session_ai = ai
+        self._session_ai_model = ai_model
         builder = getattr(self, f"_plan_{_snake(intent.name)}")
         built = builder(intent)
         steps, reasoning = built[0], list(built[1])
@@ -518,17 +545,23 @@ class IntentEngine:
             Step(id="3", capability="deployment", action="status",
                  parameters={"environment": env}, risk=RiskLevel.LOW),
         ]
-        if self._registry.is_available("ai"):
+        if self._session_ai and self._registry.is_available("ai"):
+            chosen = self._session_ai_model
             reasoning.append(
-                "AI capability available: the gathered context is sent to the model for analysis"
+                "AI capability available: the gathered context is sent to "
+                + (f"the {chosen!r} model" if chosen else "the model")
+                + " for analysis"
             )
             steps.append(
                 Step(id="4", capability="ai", action="complete",
                      parameters={"prompt": f"Diagnose the state of {self._config.project_name} on {env}"},
-                     depends_on=["1", "2", "3"], risk=RiskLevel.LOW)
+                     depends_on=["1", "2", "3"], risk=RiskLevel.LOW,
+                     implementation=chosen)
             )
         else:
-            reasoning.append("No AI capability available: raw context is returned (degraded mode)")
+            reasoning.append(
+                "No AI used: raw context is returned (degraded mode, EF-014)"
+            )
         return steps, reasoning
 
 

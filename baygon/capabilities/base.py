@@ -234,6 +234,20 @@ class AICapability(CapabilityImplementation):
     @abc.abstractmethod
     def complete(self, prompt: str, context: dict[str, Any] | None = None, **params: Any) -> str: ...
 
+    def describe(self) -> dict[str, Any]:
+        """Model identity and freshness, best effort.
+
+        `up_to_date` is True/False when the provider can be asked which
+        models it currently serves, and None when it cannot — freshness
+        is informative, never a dependency (ENF-006).
+        """
+        return {
+            "identifier": self.identifier,
+            "model": self.config.get("model"),
+            "up_to_date": None,
+            "known_models": [],
+        }
+
 
 #: Contract expected for each capability name. The registry rejects an
 #: implementation that does not honour the contract of its capability.

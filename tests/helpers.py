@@ -194,6 +194,18 @@ class ClassifierAI(AICapability):
         return ClassifierAI.answer
 
 
+class SecondClassifierAI(ClassifierAI):
+    """A second declared model, to test explicit model selection."""
+
+    identifier = "second-classifier"
+    answer = "Diagnose"
+    prompts: list[str] = []
+
+    def complete(self, prompt: str, context: dict[str, Any] | None = None, **params: Any) -> str:
+        SecondClassifierAI.prompts.append(prompt)
+        return SecondClassifierAI.answer
+
+
 class FakeReview(ReviewCapability):
     identifier = "fake-review"
 

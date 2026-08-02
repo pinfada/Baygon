@@ -146,6 +146,8 @@ class BaygonAPIHandler(BaseHTTPRequestHandler):
             return
         elif self.path == "/capabilities":
             self._json(200, self.kernel.capabilities())
+        elif self.path == "/models":
+            self._json(200, self.kernel.models())
         elif self.path == "/context":
             self._json(200, self.kernel.context())
         elif self.path == "/history":
@@ -175,12 +177,14 @@ class BaygonAPIHandler(BaseHTTPRequestHandler):
             self._json(400, {"error": f"invalid request body: {exc}"})
             return
 
+        # Session options: AI mode and chosen model.
+        session = {"ai": bool(body.get("ai", True)), "ai_model": body.get("model")}
         try:
             if self.path == "/plan":
-                plan = self.kernel.plan(str(intent), source="api")
+                plan = self.kernel.plan(str(intent), source="api", **session)
                 self._json(200, {"plan": plan.to_dict(), "explanation": plan.explain()})
             else:
-                plan = self.kernel.plan(str(intent), source="api")
+                plan = self.kernel.plan(str(intent), source="api", **session)
                 approved = bool(body.get("approved", False))
                 result = self.kernel.execute(plan, approved=approved)
                 self._json(200 if result.success else 502, result.to_dict())

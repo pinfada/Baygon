@@ -32,10 +32,20 @@ class CapabilityRegistry:
         # capability name -> identifier of the default implementation
         self._defaults: dict[str, str] = {}
 
-    def register(self, implementation: CapabilityImplementation, default: bool = False) -> None:
+    def register(
+        self,
+        implementation: CapabilityImplementation,
+        default: bool = False,
+        name: str | None = None,
+    ) -> None:
         """Validate then register one implementation.
 
         Discovery -> Validation -> Registration -> Activation -> Available.
+
+        `name` is the key callers select with — the provider name from
+        baygon.yaml. It defaults to the adapter's own identifier, which
+        matters when one generic adapter backs several declarations
+        (two endpoints of the same kind would otherwise collide).
         """
         capability = implementation.capability
         if not capability:
@@ -69,13 +79,14 @@ class CapabilityRegistry:
                 ImplementationState.ACTIVE if healthy else ImplementationState.FAILED
             )
 
-        self._implementations.setdefault(capability, {})[implementation.identifier] = implementation
+        key = name or implementation.identifier
+        self._implementations.setdefault(capability, {})[key] = implementation
         if default:
-            self._defaults[capability] = implementation.identifier
+            self._defaults[capability] = key
         self._bus.publish(
             events.PLUGIN_LOADED,
             capability=capability,
-            implementation=implementation.identifier,
+            implementation=key,
             state=implementation.state.value,
         )
 
@@ -92,7 +103,7 @@ class CapabilityRegistry:
     def capabilities(self) -> dict[str, list[dict[str, str]]]:
         """Expose available capabilities and their implementations."""
         return {
-            capability: [impl.metadata() for impl in impls.values()]
+            capability: [{**impl.metadata(), "name": key} for key, impl in impls.items()]
             for capability, impls in sorted(self._implementations.items())
         }
 
