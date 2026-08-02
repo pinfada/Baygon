@@ -11,6 +11,16 @@ aucun fournisseur.
 La documentation de référence se trouve dans [`docs/`](docs/) — le code
 implémente la documentation, jamais l'inverse.
 
+| Chapitre | Contenu |
+|---|---|
+| [01](docs/01-vision.md)–[02](docs/02-constitution.md) | Vision et Constitution : les principes immuables |
+| [03](docs/03-architecture-globale.md)–[05](docs/05-exigences-non-fonctionnelles.md) | Architecture globale, exigences fonctionnelles et non fonctionnelles |
+| [06](docs/06-specification-baygon-yaml.md) | Spécification de `baygon.yaml` |
+| [07](docs/07-architecture-noyau.md)–[10](docs/10-capability-registry.md) | Noyau, capacités, Intent Engine, Capability Registry |
+| [11](docs/11-deploiement.md) | Déploiement en production (systemd, reverse proxy TLS) |
+| **[12](docs/12-mode-operatoire.md)** | **Mode opératoire : installer et utiliser, commande par commande** |
+| [13](docs/13-capacites-etendues.md) | Capacités étendues : `developer`, `review` et la boucle Dev → QA → Revue |
+
 ## Architecture
 
 ```
