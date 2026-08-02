@@ -185,6 +185,20 @@ class RecoveryCapability(CapabilityImplementation):
     def restore(self, environment: str, **params: Any) -> dict[str, Any]: ...
 
 
+class DeveloperCapability(CapabilityImplementation):
+    """Code modification by an orchestrated coding agent.
+
+    Baygon never edits code itself: the agent (Claude Code, aider, ...)
+    is a specialized tool like any other, and stays interchangeable.
+    `feedback` carries the QA report of the previous failed attempt.
+    """
+
+    capability = "developer"
+
+    @abc.abstractmethod
+    def fix(self, description: str, feedback: str | None = None, **params: Any) -> dict[str, Any]: ...
+
+
 class AICapability(CapabilityImplementation):
     """Reasoning. Optional: Baygon must stay fully usable without it."""
 
@@ -209,6 +223,7 @@ CAPABILITY_CONTRACTS: dict[str, type[CapabilityImplementation]] = {
         SSHCapability,
         StorageCapability,
         WorkspaceCapability,
+        DeveloperCapability,
         BackupCapability,
         RecoveryCapability,
         AICapability,

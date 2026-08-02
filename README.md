@@ -86,6 +86,15 @@ Côté observabilité, deux adaptateurs réels : **Loki** pour la capacité `log
 (requêtes PromQL avec substitution de l'environnement). Baygon consulte, il ne
 stocke jamais (EF-007).
 
+**Boucle Dev → QA** : « Résous le bug de paiement » déclenche l'intention
+`FixBug` — l'agent codeur (capacité `developer`, ex. Claude Code via
+`baygon_plugins.coding_agent`) produit la correction, Baygon exécute la
+commande `test` déclarée comme contrôle qualité indépendant, et en cas d'échec
+le rapport QA est réinjecté à l'agent pour une nouvelle tentative (3 rondes
+maximum, chacune auditée). Succès → notification « Bug résolu et validé par
+Baygon » ; échec final → notification d'échec. Baygon ne modifie jamais le
+code lui-même : l'agent est un outil spécialisé orchestré, interchangeable.
+
 Côté notifications, deux adaptateurs réels : **Slack** (webhook entrant, URL
 lue dans `SLACK_WEBHOOK_URL`) et **e-mail** (SMTP, mot de passe dans
 `SMTP_PASSWORD`). Et le noyau notifie automatiquement **tout échec

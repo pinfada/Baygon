@@ -8,6 +8,7 @@ from typing import Any
 
 from baygon.capabilities import (
     BackupCapability,
+    DeveloperCapability,
     DeploymentCapability,
     LogsCapability,
     MetricsCapability,
@@ -150,6 +151,32 @@ class FakeRecovery(RecoveryCapability):
 
     def restore(self, environment: str, **params: Any) -> dict[str, Any]:
         return {"environment": environment, "state": "restored"}
+
+
+#: Shared state for the FixBug loop tests (reset in each test's setUp).
+FIXBUG_STATE: dict[str, Any] = {"attempts": 0, "fixed_after": 1, "feedbacks": []}
+
+
+class LoopDevAgent(DeveloperCapability):
+    """Coding agent whose fixes only work from attempt `fixed_after` on."""
+
+    identifier = "loop-dev"
+
+    def fix(self, description: str, feedback: str | None = None, **params: Any) -> dict[str, Any]:
+        FIXBUG_STATE["attempts"] += 1
+        FIXBUG_STATE["feedbacks"].append(feedback)
+        return {"state": "patched", "attempt": FIXBUG_STATE["attempts"]}
+
+
+class GatedWorkspace(WorkspaceCapability):
+    """QA gate: the test command passes only once the fix is good."""
+
+    identifier = "gated-workspace"
+
+    def execute(self, command: str, command_line: str, environment: str, **params: Any) -> dict[str, Any]:
+        if FIXBUG_STATE["attempts"] < FIXBUG_STATE["fixed_after"]:
+            raise RuntimeError("2 tests failed: test_refund, test_checkout")
+        return {"command": command, "exit_code": 0}
 
 
 class FakeNotification(NotificationCapability):

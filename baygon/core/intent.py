@@ -77,6 +77,10 @@ class Plan:
     intent: Intent
     steps: list[Step]
     reasoning: list[str]
+    #: Bounded retry policy: how many times the whole plan may run.
+    max_rounds: int = 1
+    #: Step that receives the previous round's failure report as feedback.
+    feedback_step: str | None = None
 
     @property
     def risk(self) -> RiskLevel:
@@ -118,6 +122,8 @@ class Plan:
             },
             "risk": self.risk.value,
             "requires_validation": self.requires_validation,
+            "max_rounds": self.max_rounds,
+            "feedback_step": self.feedback_step,
             "reasoning": self.reasoning,
             "steps": [step.to_dict() for step in self.steps],
         }
@@ -129,6 +135,7 @@ _ENVIRONMENTS = ("production", "staging", "development")
 _RULES: list[tuple[str, re.Pattern[str]]] = [
     ("DeployProject", re.compile(r"\b(deploy|d[ée]ploie[rs]?)\b", re.IGNORECASE)),
     ("RollbackDeployment", re.compile(r"\b(rollback|reviens|annule le d[ée]ploiement)\b", re.IGNORECASE)),
+    ("FixBug", re.compile(r"\b(r[ée]sous|corrige[rs]?|r[ée]pare[rs]?|fix)\b", re.IGNORECASE)),
     ("BackupProject", re.compile(r"\b(backup|sauvegarde\w*)\b", re.IGNORECASE)),
     ("RestoreProject", re.compile(r"\b(restore|restaure\w*|restauration)\b", re.IGNORECASE)),
     ("OpenConsole", re.compile(r"\b(ssh|consoles?|terminal)\b", re.IGNORECASE)),
@@ -212,12 +219,15 @@ class IntentEngine:
     def plan(self, text: str, source: str = "shell") -> Plan:
         intent = self.resolve(text, source=source)
         builder = getattr(self, f"_plan_{_snake(intent.name)}")
-        steps, reasoning = builder(intent)
+        built = builder(intent)
+        steps, reasoning = built[0], built[1]
+        extras = built[2] if len(built) > 2 else {}
         return Plan(
             id=_plan_id(intent),
             intent=intent,
             steps=steps,
             reasoning=reasoning,
+            **extras,
         )
 
     def _plan_deploy_project(self, intent: Intent) -> tuple[list[Step], list[str]]:
@@ -312,6 +322,44 @@ class IntentEngine:
                   parameters={"limit": 10}, risk=RiskLevel.LOW)],
             ["Repository history is a read-only action"],
         )
+
+    def _plan_fix_bug(self, intent: Intent):
+        env = intent.parameters["environment"]
+        description = intent.raw_input
+        reasoning = [
+            "The coding agent (developer capability) produces the fix; Baygon never edits code itself",
+            "Code changes are reversible through version control (MEDIUM)",
+        ]
+        steps = [
+            Step(id="1", capability="developer", action="fix",
+                 parameters={"description": description}, risk=RiskLevel.MEDIUM),
+        ]
+        test_command = self._config.commands.get("test")
+        if test_command is not None:
+            reasoning.append(
+                "Independent QA: Baygon runs the declared 'test' command to validate the fix; "
+                "on failure the QA report is fed back to the agent (bounded rounds)"
+            )
+            steps.append(
+                Step(id="2", capability="workspace", action="execute",
+                     parameters={"command": "test", "command_line": str(test_command),
+                                 "environment": env},
+                     depends_on=["1"], risk=RiskLevel.MEDIUM)
+            )
+            if self._registry.is_available("notification"):
+                steps.append(
+                    Step(id="3", capability="notification", action="notify",
+                         parameters={"message":
+                                     f"Bug résolu et validé par Baygon — {description}"},
+                         depends_on=["2"], risk=RiskLevel.LOW)
+                )
+        else:
+            reasoning.append(
+                "No declared 'test' command in baygon.yaml: the fix cannot be "
+                "independently verified, single attempt only"
+            )
+            return steps, reasoning
+        return steps, reasoning, {"max_rounds": 3, "feedback_step": "1"}
 
     def _plan_run_command(self, intent: Intent) -> tuple[list[Step], list[str]]:
         command = intent.parameters["command"]
