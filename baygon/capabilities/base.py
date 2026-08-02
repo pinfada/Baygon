@@ -199,6 +199,19 @@ class DeveloperCapability(CapabilityImplementation):
     def fix(self, description: str, feedback: str | None = None, **params: Any) -> dict[str, Any]: ...
 
 
+class ServiceCapability(CapabilityImplementation):
+    """Process/service lifecycle (restart a worker, an API, ...).
+
+    Baygon does not manage processes itself: it asks the declared
+    supervisor (systemd, Docker, the cloud provider, ...) to act.
+    """
+
+    capability = "service"
+
+    @abc.abstractmethod
+    def restart(self, service: str, environment: str, **params: Any) -> dict[str, Any]: ...
+
+
 class ReviewCapability(CapabilityImplementation):
     """Publication of work for human review.
 
@@ -239,6 +252,7 @@ CAPABILITY_CONTRACTS: dict[str, type[CapabilityImplementation]] = {
         WorkspaceCapability,
         DeveloperCapability,
         ReviewCapability,
+        ServiceCapability,
         BackupCapability,
         RecoveryCapability,
         AICapability,

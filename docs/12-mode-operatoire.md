@@ -95,11 +95,28 @@ $ baygon capabilities                    # capacités et implémentations active
 $ baygon projects                        # projets gérés (voir §8)
 ```
 
-Les quatorze intentions reconnues : `DeployProject`, `RollbackDeployment`,
+Les quinze intentions reconnues : `DeployProject`, `RollbackDeployment`,
 `FixBug`, `ProposeChanges`, `BackupProject`, `RestoreProject`, `OpenConsole`,
-`ShowDatabase`, `ShowStorage`, `Diagnose`, `ShowLogs`, `ShowMetrics`,
-`ShowStatus`, `ShowHistory` — plus toute commande déclarée dans la section
-`commands` de `baygon.yaml`, reconnue par son nom.
+`RestartService`, `ShowDatabase`, `ShowStorage`, `Diagnose`, `ShowLogs`,
+`ShowMetrics`, `ShowStatus`, `ShowHistory` — plus toute commande déclarée dans
+la section `commands` de `baygon.yaml`, reconnue par son nom.
+
+Vous n'avez pas à connaître ces noms : **décrivez le symptôme**, Baygon
+reconnaît l'intention.
+
+```console
+$ baygon run "Les utilisateurs ne peuvent plus se connecter"   # → Diagnose
+$ baygon run "Le paiement renvoie une 500, regarde ce qui se passe"
+$ baygon run "La conso mémoire a doublé, tu peux voir d'où ça vient ?"
+$ baygon run "Est-ce que la migration de cette nuit est bien passée ?"  # → ShowStatus
+$ baygon run "Redémarre le worker"                             # → RestartService
+```
+
+Si aucune règle ne reconnaît la formulation **et** qu'une capacité `ai` est
+configurée, le modèle classe la demande parmi ces intentions — il n'en invente
+jamais d'autre, et le plan indique alors que l'intention a été identifiée par
+l'IA. Sans IA, le comportement est inchangé : une erreur claire listant les
+intentions connues (EF-014).
 
 Règles à retenir :
 
@@ -108,7 +125,7 @@ Règles à retenir :
   suspendu tant que `--yes` n'est pas donné ;
 - une permission absente de `baygon.yaml` vaut **refus** (pas de défaut
   permissif). Permissions vérifiées : `deploy`, `production`,
-  `database`, `ssh`, `publish`.
+  `database`, `ssh`, `publish`, `restart`.
 
 ---
 
@@ -139,6 +156,7 @@ secrets vont **toujours** dans l'environnement, jamais dans le fichier.
 | notification | `baygon_plugins.slack_notification:SlackNotification` | `SLACK_WEBHOOK_URL` |
 | notification | `baygon_plugins.email_notification:EmailNotification` | `SMTP_PASSWORD` (option) |
 | notification | `baygon_plugins.console_notification:ConsoleNotification` | — |
+| service     | `baygon_plugins.command_service:CommandService`     | —              |
 | secrets     | `baygon_plugins.env_secrets:EnvSecrets`             | —              |
 
 Exemple — passer au vrai GitHub et à Render :

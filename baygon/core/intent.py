@@ -49,6 +49,8 @@ class Intent:
     parameters: dict[str, Any]
     raw_input: str
     source: str = "shell"
+    #: "rules" (deterministic) or "ai" (classified by the model).
+    resolved_by: str = "rules"
 
 
 @dataclass
@@ -142,10 +144,24 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
     ("OpenConsole", re.compile(r"\b(ssh|consoles?|terminal)\b", re.IGNORECASE)),
     ("ShowDatabase", re.compile(r"\b(base de donn[ée]es|database|db|postgres|psql)\b", re.IGNORECASE)),
     ("ShowStorage", re.compile(r"\b(stockage|storage|s3|fichiers?|files?)\b", re.IGNORECASE)),
+    ("RestartService", re.compile(r"\b(red[ée]marre\w*|restart|relance[rs]?)\b", re.IGNORECASE)),
+    # Verification questions ("est-ce que X est bien passé ?") ask for a
+    # status, not for logs.
+    ("ShowStatus", re.compile(
+        r"\b(est-ce que|a-t-?il|ont-ils)\b.*\b(bien\s+)?(pass[ée]\w*|r[ée]ussi\w*|termin[ée]\w*|fonctionn\w+)\b",
+        re.IGNORECASE)),
     # Diagnosis comes before the single-source reads: "Pourquoi la
     # production est lente ?" is a full diagnosis (chapter 4), even
-    # though it also mentions slowness.
-    ("Diagnose", re.compile(r"\b(diagnosti\w*|incident|analyse[rs]?|pourquoi|why)\b", re.IGNORECASE)),
+    # though it also mentions slowness. Users describe symptoms rather
+    # than asking for a diagnosis, so symptom reports land here too.
+    ("Diagnose", re.compile(
+        r"\b(diagnosti\w*|incident|analyse[rs]?|pourquoi|why|investigue\w*|examine\w*)\b"
+        r"|\bregarde\b|\bd['’]o[uù] (?:[çc]a|cela) vient\b"
+        r"|\bne (?:peu[xt]|peuvent|répond\w*|marche\w*|fonctionne\w*|d[ée]marre\w*)\s+plus\b"
+        r"|\bn['’](?:arrive\w*|est)\s+plus\b|\bimpossible de\b"
+        r"|\b(?:a|ont)\s+(?:doubl[ée]\w*|tripl[ée]\w*|explos[ée]\w*)\b"
+        r"|\best\s+tomb[ée]\w*\b|\bplante\w*\b|\bcrash\w*\b",
+        re.IGNORECASE)),
     ("ShowLogs", re.compile(r"\b(logs?|journaux|erreurs?|errors?)\b", re.IGNORECASE)),
     ("ShowMetrics", re.compile(r"\b(metrics?|m[ée]triques?|performances?|lente?s?)\b", re.IGNORECASE)),
     ("ShowStatus", re.compile(r"\b(status|statut|[ée]tat)\b", re.IGNORECASE)),
@@ -153,6 +169,13 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 _HOURS = re.compile(r"(\d+)\s*(?:h|heures?|hours?)", re.IGNORECASE)
+
+#: Service named after a restart verb: "redémarre le worker" -> worker.
+_SERVICE = re.compile(
+    r"\b(?:red[ée]marre\w*|restart|relance[rs]?)\s+"
+    r"(?:le |la |les |l['’]|the )?(?P<name>[\w-]+)",
+    re.IGNORECASE,
+)
 
 
 class IntentEngine:
@@ -194,11 +217,48 @@ class IntentEngine:
                     raw_input=cleaned,
                     source=source,
                 )
+        # Long tail: the rules found nothing. When an AI capability is
+        # available, let the model classify the request — but only into
+        # a known intention (Article 5: Baygon decides which tools to
+        # use; it never invents an action). Without AI, or when the
+        # model fails or declines, the behaviour is unchanged (EF-014).
+        classified = self._classify_with_ai(cleaned)
+        if classified is not None:
+            return Intent(
+                name=classified,
+                parameters=self._extract_parameters(cleaned),
+                raw_input=cleaned,
+                source=source,
+                resolved_by="ai",
+            )
         raise UnknownIntentError(text, self.supported_intents())
+
+    def _classify_with_ai(self, text: str) -> str | None:
+        if not self._registry.is_available("ai"):
+            return None
+        known = self.supported_intents()
+        prompt = (
+            "Classify the operator request below into exactly one of these "
+            "intentions, or answer NONE if none fits.\n"
+            "Answer with the intention name only, nothing else.\n\n"
+            "Intentions:\n"
+            + "\n".join(f"- {name}" for name in known)
+            + f"\n\nRequest: {text}\n"
+        )
+        try:
+            answer = self._registry.resolve("ai").complete(prompt)
+        except Exception:
+            # An unreachable model must never break intent resolution.
+            return None
+        candidate = str(answer).strip().splitlines()[0].strip().strip(".`\"' ")
+        return candidate if candidate in known else None
 
     def _extract_parameters(self, text: str) -> dict[str, Any]:
         params: dict[str, Any] = {}
         lowered = text.lower()
+        service = _SERVICE.search(text)
+        if service:
+            params["service"] = service.group("name").lower()
         for env in _ENVIRONMENTS:
             if env in lowered or (env == "development" and "dev" in lowered.split()):
                 params["environment"] = env
@@ -221,8 +281,15 @@ class IntentEngine:
         intent = self.resolve(text, source=source)
         builder = getattr(self, f"_plan_{_snake(intent.name)}")
         built = builder(intent)
-        steps, reasoning = built[0], built[1]
+        steps, reasoning = built[0], list(built[1])
         extras = built[2] if len(built) > 2 else {}
+        if intent.resolved_by == "ai":
+            # Transparency (Article 8): say how the intention was found.
+            reasoning.insert(
+                0,
+                "Intention identified by the AI model: the deterministic rules "
+                "did not match this phrasing",
+            )
         return Plan(
             id=_plan_id(intent),
             intent=intent,
@@ -264,6 +331,18 @@ class IntentEngine:
                   parameters={"environment": env}, risk=risk)],
             [f"Rollback requested on environment {env}",
              "Rollback modifies a deployed environment, validation applies to production"],
+        )
+
+    def _plan_restart_service(self, intent: Intent) -> tuple[list[Step], list[str]]:
+        env = intent.parameters["environment"]
+        service = intent.parameters.get("service", "")
+        risk = RiskLevel.HIGH if env == "production" else RiskLevel.MEDIUM
+        return (
+            [Step(id="1", capability="service", action="restart",
+                  parameters={"service": service, "environment": env}, risk=risk)],
+            [f"Restarting service {service!r} on {env}: the declared supervisor "
+             "performs the restart, Baygon only asks for it",
+             "The operation is gated by the 'restart' permission"],
         )
 
     def _plan_open_console(self, intent: Intent) -> tuple[list[Step], list[str]]:

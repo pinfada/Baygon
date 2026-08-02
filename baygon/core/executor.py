@@ -38,6 +38,7 @@ _PERMISSION_BY_ACTION = {
     ("database", "info"): "database",
     ("ssh", "command"): "ssh",
     ("review", "publish"): "publish",
+    ("service", "restart"): "restart",
 }
 
 
