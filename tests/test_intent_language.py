@@ -167,7 +167,10 @@ class CommandServiceAdapterTest(unittest.TestCase):
         adapter = FakeService({"services": {"worker": "systemctl restart app-worker"}})
         result = adapter.restart("worker", environment="production")
         self.assertEqual(adapter.ran, ["systemctl restart app-worker"])
-        self.assertEqual(result["state"], "restarted")
+        # No status command is declared, so nothing was observed: the
+        # restart was asked for, and saying more would be a guess.
+        self.assertEqual(result["state"], "restart-requested")
+        self.assertFalse(result["verified"])
 
     def test_unknown_service_lists_the_declared_ones(self) -> None:
         from baygon_plugins.command_service import CommandService

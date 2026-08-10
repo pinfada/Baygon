@@ -207,6 +207,26 @@ cause : environment variable 'JIYUFIT_DATABASE_URL' is not set
    → or hand it to the coding agent: run "corrige le dernier incident"
 ```
 
+**Un état n'est jamais affirmé sans avoir été observé.** Un code de retour dit
+qu'une commande a tourné ; il ne dit rien du système. `docker compose restart
+web` réussit quand rien ne tourne — redémarrer zéro conteneur est un succès.
+Baygon ne surveille pas les processus et ne peut pas observer seul : comme
+tout le reste, l'observation se **déclare**, par une commande de statut par
+service. Le contrat `service` a donc deux actions, agir et observer.
+
+```yaml
+  superviseur:
+    options:
+      services: {web: docker compose restart web}
+      status:   {web: docker compose ps --status running web}
+```
+
+Trois réponses honnêtes, jamais « redémarré » sur la foi d'un code de retour :
+`état observé` quand la commande de statut répond, `nothing-observed` quand
+elle ne voit rien, `unknown` quand elle échoue — et `restart-requested`,
+`verified: false`, quand aucune observation n'est déclarée. « Dans quel état
+est le worker ? » interroge le superviseur sans rien redémarrer.
+
 **Diagnostic** : `baygon doctor` répond à la question que ni `capabilities` ni
 `context` ne traitaient — *qu'est-ce qui marche ici ?* Chaque intention est
 confrontée à ce que le projet déclare et autorise, et ce qui manque est nommé

@@ -192,9 +192,18 @@ _LAST_INCIDENT = re.compile(
 )
 
 #: Service named after a restart verb: "redémarre le worker" -> worker.
+#: Words that stand between the question and the name it is about:
+#: "dans quel état est le worker" -> worker.
+_FILLER = (
+    r"(?:"
+    r"(?:est|sont|is|are|du|des|de|le|la|les|the|of)\s+"
+    r"|l['’]|d['’]"          # élidés : pas d'espace après l'apostrophe
+    r")*"
+)
+
 _SERVICE = re.compile(
-    r"\b(?:red[ée]marre\w*|restart|relance[rs]?)\s+"
-    r"(?:le |la |les |l['’]|the )?(?P<name>[\w-]+)",
+    r"\b(?:red[ée]marre\w*|restart|relance[rs]?|statut|[ée]tat|status)\s+"
+    + _FILLER + r"(?P<name>[\w-]+)",
     re.IGNORECASE,
 )
 
@@ -295,7 +304,11 @@ class IntentEngine:
         lowered = text.lower()
         service = _SERVICE.search(text)
         if service:
-            params["service"] = service.group("name").lower()
+            name = service.group("name").lower()
+            # "l'état de la production" names an environment, not a
+            # service; asking the supervisor about it would be nonsense.
+            if name not in _ENVIRONMENTS:
+                params["service"] = name
         for env in _ENVIRONMENTS:
             if env in lowered or (env == "development" and "dev" in lowered.split()):
                 params["environment"] = env
@@ -409,6 +422,8 @@ class IntentEngine:
                   parameters={"service": service, "environment": env}, risk=risk)],
             [f"Restarting service {service!r} on {env}: the declared supervisor "
              "performs the restart, Baygon only asks for it",
+             "L'état observé après l'action est rapporté : un code de retour "
+             "dit qu'une commande a tourné, pas dans quel état est le service",
              "The operation is gated by the 'restart' permission"],
         )
 
@@ -466,6 +481,17 @@ class IntentEngine:
 
     def _plan_show_status(self, intent: Intent) -> tuple[list[Step], list[str]]:
         env = intent.parameters["environment"]
+        service = intent.parameters.get("service")
+        # A named service is a question for its supervisor; the cloud
+        # would answer about the deployment, which is not what was asked.
+        if service and self._registry.is_available("service"):
+            return (
+                [Step(id="1", capability="service", action="status",
+                      parameters={"service": service, "environment": env},
+                      risk=RiskLevel.LOW)],
+                [f"State of service {service!r} on {env}, as observed by the "
+                 "declared supervisor — reading a state changes nothing"],
+            )
         return (
             [Step(id="1", capability="deployment", action="status",
                   parameters={"environment": env}, risk=RiskLevel.LOW)],

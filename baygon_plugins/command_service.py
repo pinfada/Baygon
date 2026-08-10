@@ -63,9 +63,46 @@ class CommandService(ServiceCapability):
                 ],
             )
         output = self._run(str(command_line))
+        # Acting is not observing. What comes back is what was seen, or
+        # an honest admission that nothing was.
+        observed = self._observe(service)
         return {
             "service": service,
             "environment": environment,
-            "state": "restarted",
             "output": output[-2000:],
+            **observed,
+        }
+
+    def status(self, service: str, environment: str, **params: Any) -> dict[str, Any]:
+        commands = self.config.get("status") or {}
+        if not commands.get(service):
+            known = ", ".join(sorted(commands)) or "none"
+            raise ActionableError(
+                f"no status command declared for service {service!r}; "
+                f"observable services: {known}",
+                [
+                    f"declare options.status.{service} in baygon.yaml, "
+                    "e.g. 'docker compose ps --status running web'",
+                    "Baygon does not inspect processes itself; it asks what you declared",
+                ],
+            )
+        return {"service": service, "environment": environment, **self._observe(service)}
+
+    def _observe(self, service: str) -> dict[str, Any]:
+        """Run the declared status command, and say plainly what it told.
+
+        Three honest outcomes: what was seen, nothing seen, or unknown
+        — never "restarted" on the strength of an exit code alone.
+        """
+        command_line = (self.config.get("status") or {}).get(service)
+        if not command_line:
+            return {"state": "restart-requested", "verified": False,
+                    "observation_error": "no status command declared for this service"}
+        try:
+            seen = self._run(str(command_line)).strip()
+        except Exception as exc:
+            return {"state": "unknown", "verified": False, "observation_error": str(exc)}
+        return {
+            "state": seen[-500:] if seen else "nothing-observed",
+            "verified": True,
         }

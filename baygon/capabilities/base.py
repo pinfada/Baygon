@@ -260,6 +260,16 @@ class ServiceCapability(CapabilityImplementation):
     @abc.abstractmethod
     def restart(self, service: str, environment: str, **params: Any) -> dict[str, Any]: ...
 
+    @abc.abstractmethod
+    def status(self, service: str, environment: str, **params: Any) -> dict[str, Any]:
+        """What state the service is observed to be in.
+
+        An exit code says a command ran; it says nothing about the
+        system. Acting and observing are two questions, so they are two
+        actions — and an implementation that cannot observe must say so
+        rather than let a successful command pass for a running service.
+        """
+
 
 class ReviewCapability(CapabilityImplementation):
     """Publication of work for human review.

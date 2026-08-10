@@ -17,6 +17,7 @@ from baygon.capabilities import (
     RecoveryCapability,
     RepositoryCapability,
     ReviewCapability,
+    ServiceCapability,
     TracesCapability,
     WorkspaceCapability,
 )
@@ -162,6 +163,20 @@ class RecordingAI(AICapability):
     def complete(self, prompt: str, context: dict[str, Any] | None = None, **params: Any) -> str:
         RecordingAI.calls.append(prompt)
         return "analysis"
+
+
+class ObservableService(ServiceCapability):
+    """A supervisor that can be asked what it sees, not only told to act."""
+
+    identifier = "observable-service"
+
+    def restart(self, service: str, environment: str, **params: Any) -> dict[str, Any]:
+        return {"service": service, "environment": environment,
+                "state": "Up 2 hours", "verified": True}
+
+    def status(self, service: str, environment: str, **params: Any) -> dict[str, Any]:
+        return {"service": service, "environment": environment,
+                "state": "Up 2 hours", "verified": True}
 
 
 class FakeWorkspace(WorkspaceCapability):
