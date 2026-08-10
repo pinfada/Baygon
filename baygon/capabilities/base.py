@@ -280,6 +280,9 @@ class AICapability(CapabilityImplementation):
             "model": self.config.get("model"),
             "up_to_date": None,
             "known_models": [],
+            #: True/False when the provider can be probed, None when the
+            #: question does not apply (an offline model is always there).
+            "reachable": None,
         }
 
 

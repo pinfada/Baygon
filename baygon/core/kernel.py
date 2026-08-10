@@ -147,7 +147,7 @@ class Kernel:
             name = metadata["name"]
             entry = {"name": name, "adapter": metadata["identifier"],
                      "state": metadata["state"], "model": None,
-                     "up_to_date": None, "known_models": []}
+                     "up_to_date": None, "known_models": [], "reachable": None}
             try:
                 described = self.registry.resolve("ai", requested=name).describe()
             except Exception:

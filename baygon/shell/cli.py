@@ -211,7 +211,13 @@ def _dispatch(kernel: Kernel, args: argparse.Namespace) -> int:
 
     if args.command == "models":
         for entry in kernel.models():
-            freshness = {True: "à jour", False: "OBSOLÈTE", None: "inconnu"}[entry["up_to_date"]]
+            if entry.get("reachable") is False:
+                # Saying "unknown" would send the operator to a model
+                # that cannot answer; say it cannot be reached.
+                freshness = "INJOIGNABLE"
+            else:
+                freshness = {True: "à jour", False: "OBSOLÈTE",
+                             None: "inconnu"}[entry["up_to_date"]]
             model = entry.get("model") or "—"
             print(f"{entry['name']:<20} {model:<24} {entry['adapter']:<20} "
                   f"{entry['state']:<8} {freshness}")

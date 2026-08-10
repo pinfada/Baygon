@@ -151,15 +151,21 @@ async function loadModels() {
     if (!r.ok) return;
     const models = await r.json();
     select.innerHTML = '<option value="">Modèle par défaut</option>';
-    const stale = [];
+    const stale = [], injoignables = [];
     for (const m of models) {
       const option = document.createElement('option');
       option.value = m.name;
-      option.textContent = m.model ? m.name + ' — ' + m.model : m.name;
+      const etat = m.reachable === false ? ' (injoignable)' : '';
+      option.textContent = (m.model ? m.name + ' — ' + m.model : m.name) + etat;
       select.appendChild(option);
-      if (m.up_to_date === false) stale.push(m.model || m.name);
+      if (m.reachable === false) injoignables.push(m.model || m.name);
+      else if (m.up_to_date === false) stale.push(m.model || m.name);
     }
-    notes.textContent = stale.length
+    // Un modèle hors de portée doit se voir avant d'être choisi, pas
+    // après avoir attendu sa réponse.
+    notes.textContent = injoignables.length
+      ? 'Modèle(s) hors de portée depuis ce serveur : ' + injoignables.join(', ')
+      : stale.length
       ? 'Modèle(s) qui ne figurent plus chez le fournisseur : ' + stale.join(', ')
       : '';
   } catch (e) { /* le choix reste possible même sans liste */ }
