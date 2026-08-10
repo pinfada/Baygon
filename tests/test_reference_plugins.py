@@ -15,6 +15,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from baygon_plugins.console_notification import ConsoleNotification
+from baygon_plugins.file_logs import FileLogs, tail_lines
 from baygon_plugins.local_git import LocalGitRepository
 from baygon_plugins.mock_deploy import MockDeployment
 from baygon_plugins.static_metrics import StaticMetrics
@@ -146,6 +147,91 @@ class ConsoleNotificationTest(unittest.TestCase):
             ConsoleNotification({}).notify("deployment finished")
         self.assertEqual(out.getvalue(), "")
         self.assertTrue(errors.getvalue())
+
+
+class FileLogsTest(unittest.TestCase):
+    """Only the tail of a log is ever shown, so only the tail is read.
+
+    A real development log on this machine is several megabytes; a
+    production one is far larger. Loading it whole to print a hundred
+    lines costs seconds and the memory to match (ENF-010).
+    """
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+
+    def _logs(self, text: str, limit: int = 100) -> FileLogs:
+        (self.dir / "app.log").write_text(text, encoding="utf-8")
+        adapter = FileLogs({"files": {"production": "app.log"}, "max_lines": limit})
+        adapter.project_dir = self.dir
+        return adapter
+
+    def test_returns_the_last_lines_in_order(self) -> None:
+        adapter = self._logs("".join(f"line {n}\n" for n in range(1, 51)), limit=3)
+        self.assertEqual(adapter.fetch("production"), ["line 48", "line 49", "line 50"])
+
+    def test_a_short_file_yields_all_of_its_lines(self) -> None:
+        self.assertEqual(self._logs("a\nb\n", limit=100).fetch("production"), ["a", "b"])
+
+    def test_a_last_line_without_a_newline_is_not_lost(self) -> None:
+        self.assertEqual(self._logs("a\nb", limit=100).fetch("production"), ["a", "b"])
+
+    def test_an_empty_file_yields_nothing(self) -> None:
+        self.assertEqual(self._logs("", limit=100).fetch("production"), [])
+
+    def test_windows_line_endings_are_understood(self) -> None:
+        (self.dir / "app.log").write_bytes(b"a\r\nb\r\n")
+        adapter = FileLogs({"files": {"production": "app.log"}, "max_lines": 100})
+        adapter.project_dir = self.dir
+        self.assertEqual(adapter.fetch("production"), ["a", "b"])
+
+    def test_a_missing_file_is_not_an_error(self) -> None:
+        adapter = FileLogs({"files": {"production": "absent.log"}})
+        adapter.project_dir = self.dir
+        self.assertEqual(adapter.fetch("production"), [])
+
+    def test_an_undeclared_environment_yields_nothing(self) -> None:
+        self.assertEqual(self._logs("a\n").fetch("staging"), [])
+
+    def test_a_corrupt_byte_does_not_break_the_reading(self) -> None:
+        """A log is read to diagnose a problem; it must not add one."""
+        (self.dir / "app.log").write_bytes(b"bonjour\n\xff\xfe invalide\nfin\n")
+        adapter = FileLogs({"files": {"production": "app.log"}, "max_lines": 100})
+        adapter.project_dir = self.dir
+        self.assertEqual(adapter.fetch("production")[-1], "fin")
+
+    def test_reading_backwards_agrees_with_reading_everything(self) -> None:
+        """The chunked walk must be indistinguishable from the naive read.
+
+        Block boundaries are where a reverse reader goes wrong, so the
+        chunk size is shrunk to force many iterations and every
+        interesting limit is compared against the obvious implementation.
+        """
+        text = "".join(f"ligne {n} — accentué\n" for n in range(1, 201))
+        path = self.dir / "app.log"
+        path.write_text(text, encoding="utf-8")
+        expected_all = text.splitlines()
+        for chunk in (1, 2, 7, 64, 4096):
+            for limit in (1, 2, 99, 200, 500):
+                with self.subTest(chunk=chunk, limit=limit):
+                    self.assertEqual(
+                        tail_lines(path, limit, chunk_size=chunk),
+                        expected_all[-limit:],
+                    )
+
+    def test_a_multi_megabyte_log_still_answers(self) -> None:
+        path = self.dir / "big.log"
+        line = "x" * 200
+        with path.open("w", encoding="utf-8") as handle:
+            for n in range(40_000):  # ~8 MB
+                handle.write(f"{n} {line}\n")
+        self.assertGreater(path.stat().st_size, 8_000_000)
+        tail = tail_lines(path, 100)
+        self.assertEqual(len(tail), 100)
+        self.assertTrue(tail[-1].startswith("39999 "))
+        self.assertTrue(tail[0].startswith("39900 "))
 
 
 if __name__ == "__main__":
