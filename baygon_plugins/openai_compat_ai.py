@@ -31,31 +31,21 @@ from __future__ import annotations
 
 import json
 import os
-import socket
-import urllib.parse
 import urllib.request
 from typing import Any
 
 from baygon.capabilities import AICapability
+from baygon_plugins import _http
+from baygon_plugins._http import (
+    DEFAULT_CONNECT_TIMEOUT_SECONDS,
+    EndpointUnreachable,
+)
 
 #: How long a model may take to compose its answer. Generous on
 #: purpose: a local reasoning model routinely needs a minute or more.
 DEFAULT_TIMEOUT_SECONDS = 120.0
-#: How long merely *reaching* the endpoint may take. Connecting either
-#: succeeds in seconds or never will, so this stays short — it is what
-#: an operator away from the machine hosting the model runs into.
-DEFAULT_CONNECT_TIMEOUT_SECONDS = 5.0
 #: Freshness is informative, so its request never waits long.
 LIST_TIMEOUT_SECONDS = 15.0
-
-
-class EndpointUnreachable(RuntimeError):
-    """The endpoint could not even be connected to.
-
-    Distinct from every other failure so a caller can tell "out of
-    reach" from "answered something unexpected" without reading the
-    message — and without probing the endpoint a second time.
-    """
 
 
 class OpenAICompatibleAI(AICapability):
@@ -100,46 +90,25 @@ class OpenAICompatibleAI(AICapability):
         )
 
     def endpoint(self) -> tuple[str, int]:
-        parsed = urllib.parse.urlsplit(str(self.config.get("base_url", "")))
-        return parsed.hostname or "", parsed.port or (
-            443 if parsed.scheme == "https" else 80
-        )
+        return _http.endpoint_of(self.config.get("base_url", ""))
 
     def probes_directly(self) -> bool:
-        """Whether connecting straight to the endpoint proves anything.
-
-        Behind a proxy it does not: the endpoint is not who we would be
-        talking to, so a direct probe would answer the wrong question
-        and refuse a setup that actually works — exactly the networks
-        met away from home.
-        """
-        if self.connect_timeout() <= 0:
-            return False
-        scheme = urllib.parse.urlsplit(str(self.config.get("base_url", ""))).scheme
-        host, _ = self.endpoint()
-        if not host:
-            return False
-        if urllib.request.getproxies().get(scheme) and not urllib.request.proxy_bypass(host):
-            return False
-        return True
+        return _http.probes_directly(
+            self.config.get("base_url", ""), self.connect_timeout()
+        )
 
     def require_reachable(self) -> None:
         """Give up on an out-of-reach endpoint in seconds, not minutes.
 
-        `urlopen` applies one budget to connecting *and* answering, so a
-        generous response timeout also means a generous wait for an
-        endpoint that will never reply.
+        The way out differs from the other adapters: a model is chosen
+        per session, so the operator can pick another one — or none.
         """
-        if not self.probes_directly():
-            return
-        host, port = self.endpoint()
-        seconds = self.connect_timeout()
         try:
-            socket.create_connection((host, port), timeout=seconds).close()
-        except OSError as exc:
+            _http.require_reachable("AI", self.config.get("base_url", ""), self.connect_timeout())
+        except EndpointUnreachable as exc:
             raise EndpointUnreachable(
-                f"AI endpoint {host}:{port} is unreachable after {seconds:g}s ({exc}); "
-                "choose another declared model for this session, or run without AI"
+                f"{exc}. Choose another declared model for this session, "
+                "or run without AI"
             ) from exc
 
     # ------------------------------------------------------------------

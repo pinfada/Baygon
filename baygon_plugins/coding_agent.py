@@ -40,6 +40,7 @@ import subprocess
 from typing import Any
 
 from baygon.capabilities import DeveloperCapability
+from baygon_plugins._process import failure_message
 
 
 class CodingAgent(DeveloperCapability):
@@ -72,10 +73,7 @@ class CodingAgent(DeveloperCapability):
                 "declare its interpreter: [\"python\", \"agent.py\"]."
             ) from exc
         if completed.returncode != 0:
-            raise RuntimeError(
-                f"coding agent failed (exit {completed.returncode}): "
-                f"{completed.stderr.strip()[:500]}"
-            )
+            raise RuntimeError(failure_message("coding agent", completed))
         return completed.stdout
 
     # ------------------------------------------------------------------

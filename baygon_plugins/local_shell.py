@@ -10,6 +10,7 @@ import subprocess
 from typing import Any
 
 from baygon.capabilities import WorkspaceCapability
+from baygon_plugins._process import failure_message
 
 
 class LocalShellWorkspace(WorkspaceCapability):
@@ -28,10 +29,7 @@ class LocalShellWorkspace(WorkspaceCapability):
             timeout=int(self.config.get("timeout_seconds", 300)),
         )
         if completed.returncode != 0:
-            raise RuntimeError(
-                f"command {command!r} failed with exit code {completed.returncode}: "
-                f"{completed.stderr.strip()[:500]}"
-            )
+            raise RuntimeError(failure_message(f"command {command!r}", completed))
         return {
             "command": command,
             "environment": environment,

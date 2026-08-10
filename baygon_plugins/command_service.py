@@ -22,6 +22,7 @@ import subprocess
 from typing import Any
 
 from baygon.capabilities import ServiceCapability
+from baygon_plugins._process import failure_message
 
 
 class CommandService(ServiceCapability):
@@ -41,10 +42,7 @@ class CommandService(ServiceCapability):
             timeout=int(self.config.get("timeout_seconds", 120)),
         )
         if completed.returncode != 0:
-            raise RuntimeError(
-                f"restart failed (exit {completed.returncode}): "
-                f"{completed.stderr.strip()[:500]}"
-            )
+            raise RuntimeError(failure_message("restart", completed))
         return completed.stdout
 
     def health_check(self) -> bool:
