@@ -91,6 +91,17 @@ class CodingAgent(DeveloperCapability):
             )
         return [str(part) for part in command]
 
+    def _extension_decides_what_is_executable(self) -> bool:
+        """True where the system has no executable bit.
+
+        Windows judges a program by its extension: `shutil.which` there
+        accepts only what PATHEXT lists, a rule Python enforces since
+        3.12. Elsewhere the executable bit settles the question.
+
+        Platform seam — single overridable entry point, faked in tests.
+        """
+        return os.name == "nt"
+
     def health_check(self) -> bool:
         command = self.config.get("command")
         if not command:
@@ -104,14 +115,12 @@ class CodingAgent(DeveloperCapability):
         resolved = self.resolve_path(program)
         if shutil.which(str(resolved)) is not None:
             return True
-        # Windows has no executable bit, so `shutil.which` accepts only
-        # the extensions listed in PATHEXT — a rule it enforces since
-        # Python 3.12. Under it, a project that ships `./agent.py` and
+        # Where extensions decide, a project that ships `./agent.py` and
         # declares it would see its agent reported missing although the
         # file is right there. A program the project ships *and*
         # declares is taken at its word; if it truly cannot be launched,
         # `fix()` says so and names the command.
-        return os.name == "nt" and resolved.is_file()
+        return self._extension_decides_what_is_executable() and resolved.is_file()
 
     def fix(self, description: str, feedback: str | None = None, **params: Any) -> dict[str, Any]:
         prompt = description

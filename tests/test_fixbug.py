@@ -12,7 +12,6 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
-from unittest import mock
 
 import tests.helpers as helpers
 from baygon.core.intent import RiskLevel
@@ -191,49 +190,53 @@ class AgentAvailabilityTest(unittest.TestCase):
         self.script = self.project / "agent.py"
         self.script.write_text("print('patched')\n", encoding="utf-8")
 
-    def _agent(self, program: str) -> "CodingAgent":
+    def _agent(self, program: str, by_extension: bool):
+        """An agent that judges executability the way one platform does.
+
+        The rule is a seam on the adapter rather than a global patch:
+        `os.name` is read by pathlib and shutil too, so forcing it would
+        change far more than the question under test.
+        """
         from baygon_plugins.coding_agent import CodingAgent
 
-        agent = CodingAgent({"command": [program]})
+        class PlatformAgent(CodingAgent):
+            def _extension_decides_what_is_executable(self) -> bool:
+                return by_extension
+
+        agent = PlatformAgent({"command": [program], "cwd": "."})
         agent.project_dir = self.project
         return agent
 
     def test_windows_trusts_a_program_the_project_ships(self) -> None:
-        with mock.patch("baygon_plugins.coding_agent.os.name", "nt"):
-            self.assertTrue(self._agent("./agent.py").health_check())
+        self.assertTrue(self._agent("./agent.py", by_extension=True).health_check())
 
     def test_windows_still_refuses_a_program_that_is_not_there(self) -> None:
         """Tolerance is about extensions, never about absence."""
-        with mock.patch("baygon_plugins.coding_agent.os.name", "nt"):
-            self.assertFalse(self._agent("./missing.py").health_check())
+        self.assertFalse(self._agent("./missing.py", by_extension=True).health_check())
 
     def test_windows_tolerance_does_not_extend_to_the_path_lookup(self) -> None:
         """A program looked up on PATH must actually be found there."""
-        with mock.patch("baygon_plugins.coding_agent.os.name", "nt"):
-            self.assertFalse(self._agent("no-such-agent-anywhere").health_check())
+        agent = self._agent("no-such-agent-anywhere", by_extension=True)
+        self.assertFalse(agent.health_check())
 
-    def test_posix_keeps_requiring_the_executable_bit(self) -> None:
-        with mock.patch("baygon_plugins.coding_agent.os.name", "posix"):
-            agent = self._agent("./agent.py")
-            self.script.chmod(0o644)
-            self.assertFalse(agent.health_check())
-            self.script.chmod(0o755)
-            self.assertTrue(agent.health_check())
+    def test_the_executable_bit_still_decides_where_there_is_one(self) -> None:
+        agent = self._agent("./agent.py", by_extension=False)
+        self.script.chmod(0o644)
+        self.assertFalse(agent.health_check())
+        self.script.chmod(0o755)
+        self.assertTrue(agent.health_check())
 
     def test_a_program_that_cannot_be_launched_says_which_and_how(self) -> None:
-        """The tolerated case must fail clearly, not with a bare errno."""
-        from baygon_plugins.coding_agent import CodingAgent
+        """The tolerated case must fail clearly, not with a bare errno.
 
-        agent = CodingAgent({"command": ["./agent.py"], "cwd": "."})
-        agent.project_dir = self.project
-        with mock.patch(
-            "baygon_plugins.coding_agent.subprocess.run",
-            side_effect=OSError("The system cannot find the file specified"),
-        ):
-            with self.assertRaises(RuntimeError) as raised:
-                agent.fix("corrige le bug")
+        No double here: the program really does not exist, so the
+        operating system really refuses to launch it.
+        """
+        agent = self._agent("./not-a-real-program", by_extension=True)
+        with self.assertRaises(RuntimeError) as raised:
+            agent.fix("corrige le bug")
         message = str(raised.exception)
-        self.assertIn("./agent.py", message)
+        self.assertIn("not-a-real-program", message)
         self.assertIn("python", message, "the message must show the portable form")
 
 
