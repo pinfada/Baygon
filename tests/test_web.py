@@ -122,6 +122,25 @@ class WebUiTest(unittest.TestCase):
         self.assertIsNotNone(select)
         self.assertIn("loadModels()", select.group(0))
 
+    def test_one_writer_owns_the_warning_line(self) -> None:
+        """Two writers on one element means the last one wins.
+
+        The mode selector and the model listing both have something to
+        say there; when each assigned it directly, switching mode wiped
+        the "model out of reach" warning — the very warning meant to be
+        seen before choosing a model.
+        """
+        _, _, body = self._get("/")
+        script = script_of(body)
+        assignments = re.findall(
+            r"getElementById\('freshness'\)\.textContent\s*=", script
+        )
+        self.assertEqual(
+            len(assignments), 1,
+            "only renderNotes() may write the warning line; "
+            f"found {len(assignments)} writers",
+        )
+
     def test_every_element_the_script_reaches_for_exists(self) -> None:
         """`getElementById` on a missing id returns null, and the next
         line throws — silently, in the browser, where no test looks."""

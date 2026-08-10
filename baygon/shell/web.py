@@ -121,11 +121,22 @@ function show(status, data) {
   approve.style.display = (status === 428) ? 'inline-block' : 'none';
   out.textContent = JSON.stringify(data, null, 2);
 }
+// Deux choses ont leur mot à dire sur la ligne d'avertissement : le
+// mode choisi et l'état des modèles. Un seul endroit la compose, sinon
+// le dernier à écrire efface l'autre — et c'est l'avertissement
+// « injoignable » qui disparaissait au moindre changement de mode.
+let noteModeles = '';
+
+function renderNotes() {
+  const ai = document.getElementById('mode').value === 'ai';
+  document.getElementById('freshness').textContent = ai ? noteModeles
+    : 'Sans IA : seules les formulations reconnues par les règles sont acceptées.';
+}
+
 function onMode() {
   const ai = document.getElementById('mode').value === 'ai';
   document.getElementById('model').disabled = !ai;
-  document.getElementById('freshness').textContent = ai ? '' :
-    'Sans IA : seules les formulations reconnues par les règles sont acceptées.';
+  renderNotes();
 }
 async function loadProjects() {
   const select = document.getElementById('project');
@@ -145,7 +156,6 @@ async function loadProjects() {
 }
 async function loadModels() {
   const select = document.getElementById('model');
-  const notes = document.getElementById('freshness');
   try {
     const r = await fetch(withProject('/models'), { headers: headers() });
     if (!r.ok) return;
@@ -163,11 +173,12 @@ async function loadModels() {
     }
     // Un modèle hors de portée doit se voir avant d'être choisi, pas
     // après avoir attendu sa réponse.
-    notes.textContent = injoignables.length
+    noteModeles = injoignables.length
       ? 'Modèle(s) hors de portée depuis ce serveur : ' + injoignables.join(', ')
       : stale.length
       ? 'Modèle(s) qui ne figurent plus chez le fournisseur : ' + stale.join(', ')
       : '';
+    renderNotes();
   } catch (e) { /* le choix reste possible même sans liste */ }
 }
 async function call(path, approved = false) {
