@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from baygon.core.errors import UnknownIntentError
+from baygon.capabilities import ActionableError
 from baygon.core.kernel import Kernel
 from tests.helpers import ClassifierAI
 
@@ -172,7 +173,7 @@ class CommandServiceAdapterTest(unittest.TestCase):
         from baygon_plugins.command_service import CommandService
 
         adapter = CommandService({"services": {"worker": "true", "api": "true"}})
-        with self.assertRaises(ValueError) as ctx:
+        with self.assertRaises(ActionableError) as ctx:
             adapter.restart("database", environment="staging")
         self.assertIn("worker", str(ctx.exception))
         self.assertIn("api", str(ctx.exception))

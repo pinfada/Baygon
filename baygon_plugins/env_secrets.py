@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from baygon.capabilities import SecretsCapability
+from baygon.capabilities import ActionableError, SecretsCapability
 
 
 class EnvSecrets(SecretsCapability):
@@ -22,5 +22,8 @@ class EnvSecrets(SecretsCapability):
         prefix = self.config.get("prefix", "")
         value = os.environ.get(f"{prefix}{name}")
         if value is None:
-            raise KeyError(f"secret {name!r} is not available")
+            raise ActionableError(
+                f"secret {name!r} is not available",
+                [f"export {prefix}{name}=… ; the name is the prefix plus the secret"],
+            )
         return value

@@ -18,11 +18,13 @@ import socket
 import urllib.parse
 import urllib.request
 
+from baygon.capabilities import ActionableError
+
 #: How long merely reaching an endpoint may take.
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 5.0
 
 
-class EndpointUnreachable(RuntimeError):
+class EndpointUnreachable(ActionableError):
     """The endpoint could not even be connected to.
 
     Distinct from every other failure so a caller can tell "out of
@@ -71,6 +73,10 @@ def require_reachable(kind: str, base_url: str, connect_timeout: float) -> None:
     except OSError as exc:
         raise EndpointUnreachable(
             f"{kind} endpoint {host}:{port} is unreachable after "
-            f"{connect_timeout:g}s ({exc}); check that it is running, or declare "
-            "another provider for this capability"
+            f"{connect_timeout:g}s ({exc})",
+            [
+                f"start the service listening on {host}:{port}",
+                f"or point options.url elsewhere for the {kind} capability",
+                "or declare another provider for it in baygon.yaml",
+            ],
         ) from exc

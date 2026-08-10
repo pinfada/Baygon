@@ -172,7 +172,8 @@ class ExecutionEngine:
                 failure = {
                     "step": step.id,
                     "cause": result.error,
-                    "options": options or self._failure_options(step),
+                    "options": (options or self._failure_options(step))
+                    + self._handover_offer(),
                 }
                 self._bus.publish(
                     events.PROVIDER_FAILED,
@@ -286,6 +287,10 @@ class ExecutionEngine:
             options = exc.options
         except Exception as exc:
             result = StepResult(step=step, success=False, error=str(exc))
+            # An implementation that knows the way out says so; nothing
+            # generic can compete with what the adapter already holds.
+            carried = getattr(exc, "options", None)
+            options = list(carried) if carried else None
         result.started_at = started
         result.finished_at = _now()
         result.duration_ms = _elapsed_ms(mark)
@@ -295,9 +300,35 @@ class ExecutionEngine:
         )
         return result, options
 
+    def _handover_offer(self) -> list[str]:
+        """Offer the coding agent, but only where one is declared.
+
+        Baygon proposes, the operator decides: the incident is handed
+        over only if someone asks for it, and the fix still goes through
+        the declared test command and the usual validation.
+        """
+        if not self._registry.is_available("developer"):
+            return []
+        return ["or hand it to the coding agent: run \"corrige le dernier incident\""]
+
     def _failure_options(self, step: Step) -> list[str]:
-        options = ["retry the step", "abort the intention"]
-        implementations = self._registry.capabilities().get(step.capability, [])
-        if len(implementations) > 1:
-            options.append("retry with another implementation")
+        """What to try when the implementation named nothing better.
+
+        Deliberately concrete: "retry the step" is wrong by
+        construction for most failures, and "retry with another
+        implementation" is useless without saying which.
+        """
+        declared = self._registry.capabilities().get(step.capability, [])
+        if not declared:
+            return [
+                f"no provider declared for capability {step.capability!r}",
+                f"declare one under 'providers' in baygon.yaml with type: {step.capability}",
+            ]
+        others = [
+            impl["name"] for impl in declared
+            if impl["name"] != (step.implementation or "")
+        ]
+        options = [f"check the {step.capability} provider and run the intention again"]
+        if len(declared) > 1:
+            options.append(f"or use another declared implementation: {', '.join(others)}")
         return options

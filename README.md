@@ -186,11 +186,41 @@ $ baygon run "Déploie en production" --yes   # action sensible : validation exp
 $ baygon run "montre-moi les erreurs des dernières 24 heures"
 $ baygon run "montre-moi les traces de la production"
 $ baygon run "analyse l'incident en production"
+$ baygon doctor                         # ce qui marche ici, et ce qui manque
+$ baygon run "corrige le dernier incident"   # confier l'incident à l'agent codeur
 $ baygon history                        # historique des intentions exécutées
 $ baygon context                        # contexte construit par le Context Engine
 $ baygon resume [--plan ID] [--yes]     # reprendre la dernière exécution échouée
 $ baygon run "ouvre une console ssh en production"   # commande de connexion (permission ssh)
 ```
+
+**Une erreur porte son remède.** Un adaptateur connaît presque toujours la
+sortie au moment où il abandonne : la variable a un nom, l'endpoint une adresse,
+les services déclarés une liste. `ActionableError` transporte cette
+connaissance jusqu'au rapport d'échec, à côté de la cause. Rien ici ne demande
+un modèle — ce que le code sait avec certitude n'a pas à être redeviné.
+
+```console
+$ baygon run "montre la base de données"
+cause : environment variable 'JIYUFIT_DATABASE_URL' is not set
+   → export JIYUFIT_DATABASE_URL=postgres://user:password@host:port/database
+   → or hand it to the coding agent: run "corrige le dernier incident"
+```
+
+**Diagnostic** : `baygon doctor` répond à la question que ni `capabilities` ni
+`context` ne traitaient — *qu'est-ce qui marche ici ?* Chaque intention est
+confrontée à ce que le projet déclare et autorise, et ce qui manque est nommé
+avec la ligne à ajouter. Déduit de la configuration seule : aucun fournisseur
+n'est contacté, donc la réponse est immédiate et reste vraie même quand tout
+est éteint. `GET /doctor` renvoie la même chose, sans paramètre `project` il
+répond pour **tous** les projets à la fois — c'est là la vue d'ensemble.
+
+**Prise en charge d'un incident** : « corrige le dernier incident » reprend la
+trace journalisée — l'étape, la capacité, la cause, l'intention servie — et la
+confie à l'agent codeur. Rien de nouveau derrière : la boucle Dev → QA
+existante, la commande `test` déclarée comme contrôle indépendant, les rondes
+bornées et la validation habituelle. L'offre n'apparaît que si une capacité
+`developer` est déclarée : pas de promesse en l'air.
 
 **Reprise** (ENF-017) : un plan interrompu par une panne fournisseur se reprend
 avec `baygon resume` — les étapes déjà réussies ne sont jamais ré-exécutées,
@@ -234,6 +264,7 @@ $ baygon serve --host 127.0.0.1 --port 8787
 | GET     | `/capabilities`  | capacités et implémentations disponibles         |
 | GET     | `/context`       | contexte du projet                               |
 | GET     | `/history`       | intentions exécutées                             |
+| GET     | `/doctor`        | ce qui marche, ce qui manque — tous les projets sans `?project=` |
 | POST    | `/plan`          | `{"intent": "…"}` → plan + explication           |
 | POST    | `/run`           | `{"intent": "…", "approved": bool}` → résultat   |
 | GET     | `/models`        | modèles IA sélectionnables et leur fraîcheur     |

@@ -191,7 +191,9 @@ class FakeRecovery(RecoveryCapability):
 
 
 #: Shared state for the FixBug loop tests (reset in each test's setUp).
-FIXBUG_STATE: dict[str, Any] = {"attempts": 0, "fixed_after": 1, "feedbacks": []}
+FIXBUG_STATE: dict[str, Any] = {
+    "attempts": 0, "fixed_after": 1, "feedbacks": [], "descriptions": []
+}
 
 
 class LoopDevAgent(DeveloperCapability):
@@ -202,6 +204,7 @@ class LoopDevAgent(DeveloperCapability):
     def fix(self, description: str, feedback: str | None = None, **params: Any) -> dict[str, Any]:
         FIXBUG_STATE["attempts"] += 1
         FIXBUG_STATE["feedbacks"].append(feedback)
+        FIXBUG_STATE.setdefault("descriptions", []).append(description)
         return {"state": "patched", "attempt": FIXBUG_STATE["attempts"]}
 
 

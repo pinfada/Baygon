@@ -69,6 +69,7 @@ PAGE = r"""<!doctype html>
   <button onclick="get('/history')">Historique</button>
   <button onclick="get('/context')">Contexte</button>
   <button onclick="get('/capabilities')">Capacités</button>
+  <button onclick="get('/doctor')">Diagnostic</button>
 </div>
 <p id="status" aria-live="polite"><span class="spinner"></span><span id="statusText"></span></p>
 <pre id="out" aria-busy="false">Prêt. Saisissez votre jeton puis exprimez une intention.</pre>

@@ -39,7 +39,7 @@ import shutil
 import subprocess
 from typing import Any
 
-from baygon.capabilities import DeveloperCapability
+from baygon.capabilities import ActionableError, DeveloperCapability
 from baygon_plugins._process import failure_message
 
 
@@ -82,10 +82,12 @@ class CodingAgent(DeveloperCapability):
         command = self.config.get("command")
         if not command:
             # No vendor default (ENF-019): the agent must be declared.
-            raise ValueError(
-                "option 'command' is required: declare your coding agent CLI in "
-                "baygon.yaml (e.g. [\"claude\", \"-p\", \"{prompt}\"], "
-                "[\"aider\", \"--message\", \"{prompt}\", \"--yes\"], ...)"
+            raise ActionableError(
+                "no coding agent declared: option 'command' is required",
+                [
+                    'declare options.command in baygon.yaml, e.g. ["claude", "-p", "{prompt}"]',
+                    'or ["aider", "--message", "{prompt}", "--yes"], or any other agent CLI',
+                ],
             )
         return [str(part) for part in command]
 

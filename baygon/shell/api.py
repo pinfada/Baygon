@@ -236,7 +236,13 @@ class BaygonAPIHandler(BaseHTTPRequestHandler):
             return
         elif self.path.split("?")[0] == "/projects":
             self._json(200, self.target.projects())
-        elif self.path.split("?")[0] in ("/capabilities", "/models", "/context", "/history"):
+        elif self.path.split("?")[0] == "/doctor" and self._query_project() is None:
+            # Without a project named, answer for every one of them:
+            # the overview is the whole point of asking here.
+            self._json(200, self.target.readiness())
+        elif self.path.split("?")[0] in (
+            "/capabilities", "/models", "/context", "/history", "/doctor"
+        ):
             try:
                 kernel = self._route(project=self._query_project())
             except BaygonError as exc:
@@ -247,6 +253,7 @@ class BaygonAPIHandler(BaseHTTPRequestHandler):
                 "/models": kernel.models,
                 "/context": kernel.context,
                 "/history": kernel.history,
+                "/doctor": kernel.readiness,
             }[self.path.split("?")[0]]
             self._json(200, reader())
         else:

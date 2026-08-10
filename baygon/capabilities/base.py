@@ -16,6 +16,21 @@ from pathlib import Path
 from typing import Any
 
 
+class ActionableError(RuntimeError):
+    """A failure that knows what would make the call work.
+
+    An implementation almost always holds the remedy at the moment it
+    gives up: the variable has a name, the endpoint has an address, the
+    declared services have a list. Carrying that alongside the cause is
+    what turns "it failed" into something an operator can act on —
+    deterministically, without asking a model to guess it back.
+    """
+
+    def __init__(self, message: str, options: list[str] | None = None) -> None:
+        super().__init__(message)
+        self.options = list(options or [])
+
+
 class ImplementationState(str, enum.Enum):
     ACTIVE = "ACTIVE"
     INACTIVE = "INACTIVE"

@@ -15,7 +15,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from baygon.core import events
+from baygon.core import events, readiness
 from baygon.core.audit import AuditJournal
 from baygon.core.config import BaygonConfig, load_config
 from baygon.core.context import ContextEngine
@@ -120,10 +120,52 @@ class Kernel:
         ai_model: str | None = None,
     ) -> Plan:
         plan = self.intent_engine.plan(text, source=source, ai=ai, ai_model=ai_model)
+        if plan.intent.parameters.get("from_last_incident"):
+            plan = self._describe_last_incident(plan)
         self.bus.publish(
             events.PLAN_CREATED, plan=plan.id, intent=plan.intent.name, risk=plan.risk.value
         )
         return plan
+
+    def _describe_last_incident(self, plan: Plan) -> Plan:
+        """Replace the description with what actually failed.
+
+        The Intent Engine recognised "the last incident" but cannot
+        know what it was: it reads language, never state. The journal
+        is the kernel's, so the kernel fills it in — the agent then
+        receives the cause, the step and the intention that was being
+        served, instead of the words the operator typed.
+        """
+        entry = self._last_failure(None)
+        if entry is None:
+            raise BaygonError(
+                "no failure recorded: there is no incident to hand over. "
+                "Describe the bug instead, or run the intention that fails first"
+            )
+        failure = entry["result"]["failure"] or {}
+        step = next(
+            (s for s in entry["result"]["steps"] if s["id"] == failure.get("step")), {}
+        )
+        description = (
+            f"Corrige l'incident suivant, survenu en exécutant l'intention "
+            f"{entry['intent']} (« {entry['input']} ») :\n"
+            f"- étape {failure.get('step')} : {step.get('capability')}."
+            f"{step.get('action')}\n"
+            f"- cause : {failure.get('cause')}\n"
+            f"Corrige la cause dans le code du projet, pas le symptôme."
+        )
+        steps = [
+            replace(s, parameters={**s.parameters, "description": description})
+            if s.capability == "developer" else s
+            for s in plan.steps
+        ]
+        reasoning = list(plan.reasoning)
+        reasoning.insert(
+            0,
+            f"Description reprise du dernier incident journalisé "
+            f"({entry['intent']}, étape {failure.get('step')})",
+        )
+        return replace(plan, steps=steps, reasoning=reasoning)
 
     def run(
         self,
@@ -248,6 +290,17 @@ class Kernel:
                 continue
             return entry
         return None
+
+    def readiness(self) -> dict[str, Any]:
+        """What can be done on this project, and what is missing.
+
+        Deduced from the configuration alone: no provider is contacted,
+        so the answer is instant and stays truthful even when every
+        backend is down.
+        """
+        return readiness.build(
+            self.config, self.registry, self.intent_engine, self.plugins.failures
+        )
 
     def capabilities(self) -> dict[str, Any]:
         return self.registry.capabilities()

@@ -13,6 +13,7 @@ import unittest
 from pathlib import Path
 
 from baygon.core.kernel import Kernel
+from baygon.capabilities import ActionableError
 from baygon_plugins.postgres_database import PostgresDatabase
 
 DB_YAML = textwrap.dedent(
@@ -64,13 +65,13 @@ class PostgresDatabaseTest(unittest.TestCase):
 
     def test_unmapped_environment_raises(self) -> None:
         adapter = PostgresDatabase({"dsn_env": {}})
-        with self.assertRaisesRegex(ValueError, "production"):
+        with self.assertRaisesRegex(ActionableError, "production"):
             adapter.info("production")
 
     def test_missing_dsn_variable_raises(self) -> None:
         os.environ.pop("BAYGONTEST_ABSENT", None)
         adapter = PostgresDatabase({"dsn_env": {"staging": "BAYGONTEST_ABSENT"}})
-        with self.assertRaisesRegex(ValueError, "BAYGONTEST_ABSENT"):
+        with self.assertRaisesRegex(ActionableError, "BAYGONTEST_ABSENT"):
             adapter.info("staging")
 
 

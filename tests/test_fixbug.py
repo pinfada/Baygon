@@ -16,6 +16,7 @@ from pathlib import Path
 
 import tests.helpers as helpers
 from baygon.core.intent import RiskLevel
+from baygon.capabilities import ActionableError
 from baygon.core.kernel import Kernel
 
 FIXBUG_YAML = textwrap.dedent(
@@ -132,7 +133,7 @@ class CodingAgentAdapterTest(unittest.TestCase):
 
         adapter = CodingAgent({})
         self.assertFalse(adapter.health_check())
-        with self.assertRaisesRegex(ValueError, "command"):
+        with self.assertRaisesRegex(ActionableError, "coding agent"):
             adapter.fix("corrige le bug")
 
     def test_any_agent_cli_works_through_the_same_template(self) -> None:

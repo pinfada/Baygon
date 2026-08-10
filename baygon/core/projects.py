@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 from baygon.core.errors import BaygonError, UnknownProjectError
 from baygon.core.kernel import Kernel
@@ -39,6 +40,9 @@ class SingleProject:
         if explicit is not None:
             return self.kernel(explicit)
         return self._kernel
+
+    def readiness(self) -> dict[str, Any]:
+        return {"projects": [self._kernel.readiness()], "unavailable": dict(self.failures)}
 
 
 class ProjectManager:
@@ -75,6 +79,18 @@ class ProjectManager:
         if kernel is None:
             raise UnknownProjectError(name, self.projects())
         return kernel
+
+    def readiness(self) -> dict[str, Any]:
+        """The overview: what every managed project can and cannot do.
+
+        A project that failed to load appears under `unavailable`
+        rather than silently missing from the list — an absent project
+        is exactly what one would fail to notice.
+        """
+        return {
+            "projects": [self.kernel(name).readiness() for name in self.projects()],
+            "unavailable": dict(self.failures),
+        }
 
     def resolve(self, text: str, explicit: str | None = None) -> Kernel:
         """Pick the target project: explicit > named in text > sole project."""

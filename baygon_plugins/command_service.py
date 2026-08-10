@@ -21,7 +21,7 @@ from __future__ import annotations
 import subprocess
 from typing import Any
 
-from baygon.capabilities import ServiceCapability
+from baygon.capabilities import ActionableError, ServiceCapability
 from baygon_plugins._process import failure_message
 
 
@@ -53,9 +53,14 @@ class CommandService(ServiceCapability):
         command_line = services.get(service)
         if not command_line:
             known = ", ".join(sorted(services)) or "none"
-            raise ValueError(
-                f"no command declared for service {service!r}; "
-                f"declared services: {known} (options.services in baygon.yaml)"
+            # The list belongs in the message too: the cause is what
+            # most views show first, and it must stand on its own.
+            raise ActionableError(
+                f"no command declared for service {service!r}; declared services: {known}",
+                [
+                    f"target one of: {known}",
+                    f"or declare options.services.{service} in baygon.yaml",
+                ],
             )
         output = self._run(str(command_line))
         return {

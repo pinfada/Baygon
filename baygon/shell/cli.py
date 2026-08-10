@@ -103,6 +103,10 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("validate", help="validate baygon.yaml")
     sub.add_parser("capabilities", help="list available capabilities and implementations")
     sub.add_parser("context", help="show the project context built by the Context Engine")
+    doctor = sub.add_parser(
+        "doctor", help="what can be done on this project, and what is missing"
+    )
+    doctor.add_argument("--json", action="store_true", help="machine-readable output")
 
     serve = sub.add_parser("serve", help="expose the Shell as a REST API")
     serve.add_argument("--host", default="127.0.0.1")
@@ -190,6 +194,39 @@ def _select_kernel(args: argparse.Namespace) -> Kernel | None:
     return target.resolve(intent_text, explicit=args.project)
 
 
+def _print_readiness(report: dict) -> None:
+    """The answer to "what works here?", readable at a glance."""
+    print(f"{report['project']} — {report['ready_count']}/{report['total_count']} "
+          "intentions utilisables")
+
+    ready = [entry["intent"] for entry in report["intents"] if entry["ready"]]
+    if ready:
+        print("\nUtilisables :")
+        for name in ready:
+            print(f"  ✓ {name}")
+    if report["commands"]:
+        print(f"  ✓ commandes déclarées, par leur nom : {', '.join(report['commands'])}")
+
+    blocked = [entry for entry in report["intents"] if not entry["ready"]]
+    if blocked:
+        print("\nIndisponibles :")
+        for entry in blocked:
+            reason = []
+            if entry["missing_capabilities"]:
+                reason.append("capacité non déclarée : " + ", ".join(entry["missing_capabilities"]))
+            if entry["missing_permissions"]:
+                reason.append("permission refusée : " + ", ".join(entry["missing_permissions"]))
+            print(f"  ✗ {entry['intent']:<20} {' ; '.join(reason)}")
+
+    failed = [p for p in report["providers"] if p["state"] != "ACTIVE"]
+    if failed or report["failures"]:
+        print("\nFournisseurs en difficulté :")
+        for provider in failed:
+            print(f"  ! {provider['name']:<20} {provider['capability']:<12} {provider['state']}")
+        for name, error in report["failures"].items():
+            print(f"  ! {name:<20} non chargé : {error}")
+
+
 def _report_progress(kernel: Kernel) -> None:
     """Show progress on an interactive terminal only.
 
@@ -221,6 +258,14 @@ def _dispatch(kernel: Kernel, args: argparse.Namespace) -> int:
             model = entry.get("model") or "—"
             print(f"{entry['name']:<20} {model:<24} {entry['adapter']:<20} "
                   f"{entry['state']:<8} {freshness}")
+        return 0
+
+    if args.command == "doctor":
+        report = kernel.readiness()
+        if args.json:
+            print(json.dumps(report, indent=2, ensure_ascii=False))
+            return 0
+        _print_readiness(report)
         return 0
 
     if args.command == "context":

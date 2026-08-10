@@ -182,6 +182,15 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
 
 _HOURS = re.compile(r"(\d+)\s*(?:h|heures?|hours?)", re.IGNORECASE)
 
+#: "corrige le dernier incident" — the description is not in the words,
+#: it is in the audit journal. The engine only recognises the phrasing;
+#: filling it in belongs to whoever owns the journal.
+_LAST_INCIDENT = re.compile(
+    r"\b(derni[eè]re?)\s+(incident|[ée]chec|erreur|panne)\b"
+    r"|\blast\s+(incident|failure|error)\b",
+    re.IGNORECASE,
+)
+
 #: Service named after a restart verb: "redémarre le worker" -> worker.
 _SERVICE = re.compile(
     r"\b(?:red[ée]marre\w*|restart|relance[rs]?)\s+"
@@ -293,6 +302,8 @@ class IntentEngine:
                 break
         else:
             params["environment"] = "development"
+        if _LAST_INCIDENT.search(text):
+            params["from_last_incident"] = True
         hours = _HOURS.search(text)
         if hours:
             params["since_hours"] = int(hours.group(1))
@@ -335,6 +346,24 @@ class IntentEngine:
             ai_model=ai_model,
             **extras,
         )
+
+    def plan_for(self, name: str) -> Plan:
+        """A representative plan for an intention, built from nothing.
+
+        Used to answer "what would this intention need?" without a
+        phrase to parse and without contacting anything. `RunCommand`
+        is the exception: it exists once per declared command, so it is
+        reported through the command list instead.
+        """
+        parameters: dict[str, Any] = {"environment": "production", "service": ""}
+        if name == "RunCommand":
+            command = next(iter(sorted(self._config.commands)), "")
+            parameters["command"] = command
+        intent = Intent(name=name, parameters=parameters, raw_input="")
+        built = getattr(self, f"_plan_{_snake(name)}")(intent)
+        extras = built[2] if len(built) > 2 else {}
+        return Plan(id=_plan_id(intent), intent=intent, steps=built[0],
+                    reasoning=list(built[1]), **extras)
 
     def _plan_deploy_project(self, intent: Intent) -> tuple[list[Step], list[str]]:
         env = intent.parameters["environment"]
