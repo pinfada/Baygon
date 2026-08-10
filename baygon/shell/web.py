@@ -6,7 +6,11 @@ logic — everything goes through the same authenticated endpoints, with
 the token typed by the user and kept in the browser only.
 """
 
-PAGE = """<!doctype html>
+# Raw string on purpose: the page carries JavaScript, and a backslash in
+# it is meant for the browser. Without the `r`, Python eats the escape —
+# `\'` reaches the browser as a bare quote, ends the string early and
+# kills the whole script, taking every button with it.
+PAGE = r"""<!doctype html>
 <html lang="fr">
 <head>
 <meta charset="utf-8">

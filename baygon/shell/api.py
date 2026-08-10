@@ -215,6 +215,10 @@ class BaygonAPIHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(data)))
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("X-Frame-Options", "DENY")
+            # The page ships with the server: a cached copy is an older
+            # Baygon's interface talking to a newer one. Upgrading the
+            # server must be enough to upgrade what the operator runs.
+            self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(data)
         elif self.path == "/health":

@@ -7,12 +7,14 @@ openly like /health, while every data call still requires the token.
 """
 
 import http.client
+import re
 import tempfile
 import threading
 import unittest
 from pathlib import Path
 
 from baygon.core.kernel import Kernel
+from baygon.shell import web
 from baygon.shell.api import make_server
 from tests.helpers import MINIMAL_YAML
 
@@ -50,6 +52,19 @@ class WebUiTest(unittest.TestCase):
         _, _, body = self._get("/")
         self.assertIn("viewport", body)
 
+    def test_the_page_is_never_cached(self) -> None:
+        """The page ships with the server, so it must not outlive it.
+
+        A cached copy is an older Baygon's interface driving a newer
+        one — including one whose bug the upgrade just fixed.
+        """
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        self.addCleanup(conn.close)
+        conn.request("GET", "/")
+        response = conn.getresponse()
+        response.read()
+        self.assertEqual(response.getheader("Cache-Control"), "no-store")
+
     def test_page_contains_no_project_data(self) -> None:
         _, _, body = self._get("/")
         self.assertNotIn("demo", body)  # the project name never leaks
@@ -57,6 +72,43 @@ class WebUiTest(unittest.TestCase):
     def test_data_endpoints_still_require_the_token(self) -> None:
         status, _, _ = self._get("/capabilities")
         self.assertEqual(status, 401)
+
+    def test_the_browser_receives_every_escape_the_source_wrote(self) -> None:
+        """A page that is served is not a page that works.
+
+        The page carries JavaScript, so a backslash written in this
+        repository is meant for the browser. If `PAGE` stops being a raw
+        string, Python consumes those escapes: `\\'` arrives as a bare
+        quote, the string ends early, the parser gives up and every
+        button on the page goes dead — while every substring assertion
+        here still passes, and the server still answers 200.
+
+        Counting is enough, and needs no JavaScript parser: an escape
+        eaten by Python is an escape missing from what is served.
+        """
+        source = Path(web.__file__).read_text(encoding="utf-8")
+        # Slice at the assignment so the comment above it does not count.
+        literal = source.split("PAGE = ", 1)[1]
+        self.assertEqual(
+            web.PAGE.count("\\"), literal.count("\\"),
+            "escapes were lost between the source and the served page: "
+            "PAGE must stay a raw string (r\"\"\"...\"\"\")",
+        )
+
+    def test_every_handler_the_page_wires_up_is_defined(self) -> None:
+        """An onclick naming a function that does not exist is a dead button."""
+        _, _, body = self._get("/")
+        script = script_of(body)
+        defined = set(re.findall(r"(?:function\s+|const\s+|let\s+)(\w+)\s*[(=]", script))
+        called = set(re.findall(r"on\w+=\"(\w+)\(", body))
+        self.assertTrue(called, "the page wires no handler at all")
+        self.assertEqual(called - defined, set())
+
+
+def script_of(html: str) -> str:
+    """The page's inline script, or "" when there is none."""
+    match = re.search(r"<script[^>]*>(.*?)</script>", html, re.DOTALL)
+    return match.group(1) if match else ""
 
 
 if __name__ == "__main__":
