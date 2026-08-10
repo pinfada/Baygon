@@ -173,8 +173,12 @@ async function loadModels() {
       else if (m.up_to_date === false) stale.push(m.model || m.name);
     }
     // Un modèle hors de portée doit se voir avant d'être choisi, pas
-    // après avoir attendu sa réponse.
-    noteModeles = injoignables.length
+    // après avoir attendu sa réponse. Et un projet sans modèle du tout
+    // ne peut rien interpréter : le proposer serait une promesse en l'air.
+    noteModeles = !models.length
+      ? 'Aucun modèle déclaré pour ce projet : même en mode IA, seules les '
+        + 'formulations reconnues par les règles sont acceptées.'
+      : injoignables.length
       ? 'Modèle(s) hors de portée depuis ce serveur : ' + injoignables.join(', ')
       : stale.length
       ? 'Modèle(s) qui ne figurent plus chez le fournisseur : ' + stale.join(', ')

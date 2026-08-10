@@ -14,15 +14,34 @@ class ConfigError(BaygonError):
 
 
 class UnknownIntentError(BaygonError):
-    """The input could not be resolved to a supported intention."""
+    """The input could not be resolved to a supported intention.
 
-    def __init__(self, text: str, supported: list[str]):
+    The message names what *this* project can do rather than everything
+    Baygon knows: listing sixteen intentions when two are possible here
+    is an enumeration of the impossible, not guidance. The full list
+    stays on `supported` for programs that want it.
+    """
+
+    def __init__(
+        self,
+        text: str,
+        supported: list[str],
+        usable: list[str] | None = None,
+        commands: list[str] | None = None,
+    ):
         self.text = text
         self.supported = supported
-        super().__init__(
-            f"Unable to resolve intention from input: {text!r}. "
-            f"Supported intentions: {', '.join(supported)}"
-        )
+        self.usable = list(usable) if usable is not None else list(supported)
+        self.commands = list(commands or [])
+        message = f"Unable to resolve intention from input: {text!r}."
+        if self.usable:
+            message += f" Usable here: {', '.join(self.usable)}."
+        else:
+            message += " No intention is usable here: no provider is declared."
+        if self.commands:
+            message += f" Declared commands, by name: {', '.join(self.commands)}."
+        message += " Run 'baygon doctor' to see what is missing and why."
+        super().__init__(message)
 
 
 class UnknownProjectError(BaygonError):

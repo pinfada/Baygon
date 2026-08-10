@@ -175,7 +175,9 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
         re.IGNORECASE)),
     ("ShowTraces", re.compile(r"\b(traces?|tracing|spans?)\b", re.IGNORECASE)),
     ("ShowLogs", re.compile(r"\b(logs?|journaux|erreurs?|errors?)\b", re.IGNORECASE)),
-    ("ShowMetrics", re.compile(r"\b(metrics?|m[ée]triques?|performances?|lente?s?)\b", re.IGNORECASE)),
+    ("ShowMetrics", re.compile(
+        r"\b(metrics?|m[ée]triques?|statistiques?|stats?|performances?|lente?s?)\b",
+        re.IGNORECASE)),
     ("ShowStatus", re.compile(r"\b(status|statut|[ée]tat)\b", re.IGNORECASE)),
     ("ShowHistory", re.compile(r"\b(historique|history|commits?)\b", re.IGNORECASE)),
 ]
@@ -239,7 +241,7 @@ class IntentEngine:
         """
         cleaned = text.strip()
         if not cleaned:
-            raise UnknownIntentError(text, self.supported_intents())
+            raise self._unknown(text)
         for name, pattern in _RULES:
             if pattern.search(cleaned):
                 return Intent(
@@ -274,7 +276,22 @@ class IntentEngine:
                 source=source,
                 resolved_by="ai",
             )
-        raise UnknownIntentError(text, self.supported_intents())
+        raise self._unknown(text)
+
+    def _unknown(self, text: str) -> UnknownIntentError:
+        """A refusal that says what this project *can* do.
+
+        Deduced the same way `baygon doctor` does, from the declared
+        providers and permissions — no provider is contacted, so a
+        refusal stays as fast as it should be.
+        """
+        from baygon.core import readiness
+
+        report = readiness.build(self._config, self._registry, self)
+        usable = [entry["intent"] for entry in report["intents"] if entry["ready"]]
+        return UnknownIntentError(
+            text, self.supported_intents(), usable=usable, commands=report["commands"]
+        )
 
     def _classify_with_ai(self, text: str, ai_model: str | None = None) -> str | None:
         if not self._registry.is_available("ai"):

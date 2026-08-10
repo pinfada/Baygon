@@ -71,7 +71,10 @@ class CliTest(unittest.TestCase):
     def test_unknown_intent_exits_2(self) -> None:
         code, _, err = self._run("run", "fais-moi un café")
         self.assertEqual(code, 2)
-        self.assertIn("Supported intentions", err)
+        # The refusal guides: what works here, and where to see the rest.
+        self.assertIn("Usable here", err)
+        self.assertIn("DeployProject", err)
+        self.assertIn("doctor", err)
 
 
 class StandardOutputStaysParsableTest(unittest.TestCase):
