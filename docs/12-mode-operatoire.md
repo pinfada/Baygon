@@ -420,5 +420,20 @@ il n'y a rien d'autre à restaurer.
 
 ```console
 $ python -m unittest discover -s tests     # depuis le dépôt Baygon
-Ran 228 tests ... OK
+Ran 293 tests ... OK (skipped=5)
 ```
+
+Les cinq tests ignorés sont les tests IA réels : ils ne s'exécutent que si un
+endpoint est déclaré, pour que la suite normale reste hermétique. Pour
+vérifier que votre modèle répond réellement à travers Baygon :
+
+```console
+$ export BAYGON_LIVE_AI_BASE_URL=http://localhost:11434/v1
+$ export BAYGON_LIVE_AI_MODEL=<votre modèle>
+$ python -m unittest tests.test_live_ai -v
+```
+
+C'est le contrôle à faire après avoir branché un vrai fournisseur IA : il
+confirme que l'endpoint sert bien le modèle déclaré, qu'une complétion revient
+exploitable, que `--no-ai` ne le joint pas, et qu'un diagnostic complet passe
+de bout en bout.

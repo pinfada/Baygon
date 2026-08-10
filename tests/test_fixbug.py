@@ -12,6 +12,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import tests.helpers as helpers
 from baygon.core.intent import RiskLevel
@@ -171,6 +172,69 @@ class CodingAgentAdapterTest(unittest.TestCase):
         adapter = FakeAgent({"command": ["agent", "{prompt}"]})
         adapter.fix("corrige le bug", feedback="2 tests failed: test_refund")
         self.assertIn("test_refund", adapter.commands[0][1])
+
+
+class AgentAvailabilityTest(unittest.TestCase):
+    """What counts as a usable program depends on the operating system.
+
+    `shutil.which` answers for POSIX, where the executable bit settles
+    the question. On Windows there is no such bit: it accepts only the
+    extensions listed in PATHEXT, a rule Python enforces since 3.12. A
+    project that ships `./agent.py` next to its baygon.yaml would see
+    its agent reported missing while the file sits right there.
+    """
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.project = Path(tmp.name)
+        self.script = self.project / "agent.py"
+        self.script.write_text("print('patched')\n", encoding="utf-8")
+
+    def _agent(self, program: str) -> "CodingAgent":
+        from baygon_plugins.coding_agent import CodingAgent
+
+        agent = CodingAgent({"command": [program]})
+        agent.project_dir = self.project
+        return agent
+
+    def test_windows_trusts_a_program_the_project_ships(self) -> None:
+        with mock.patch("baygon_plugins.coding_agent.os.name", "nt"):
+            self.assertTrue(self._agent("./agent.py").health_check())
+
+    def test_windows_still_refuses_a_program_that_is_not_there(self) -> None:
+        """Tolerance is about extensions, never about absence."""
+        with mock.patch("baygon_plugins.coding_agent.os.name", "nt"):
+            self.assertFalse(self._agent("./missing.py").health_check())
+
+    def test_windows_tolerance_does_not_extend_to_the_path_lookup(self) -> None:
+        """A program looked up on PATH must actually be found there."""
+        with mock.patch("baygon_plugins.coding_agent.os.name", "nt"):
+            self.assertFalse(self._agent("no-such-agent-anywhere").health_check())
+
+    def test_posix_keeps_requiring_the_executable_bit(self) -> None:
+        with mock.patch("baygon_plugins.coding_agent.os.name", "posix"):
+            agent = self._agent("./agent.py")
+            self.script.chmod(0o644)
+            self.assertFalse(agent.health_check())
+            self.script.chmod(0o755)
+            self.assertTrue(agent.health_check())
+
+    def test_a_program_that_cannot_be_launched_says_which_and_how(self) -> None:
+        """The tolerated case must fail clearly, not with a bare errno."""
+        from baygon_plugins.coding_agent import CodingAgent
+
+        agent = CodingAgent({"command": ["./agent.py"], "cwd": "."})
+        agent.project_dir = self.project
+        with mock.patch(
+            "baygon_plugins.coding_agent.subprocess.run",
+            side_effect=OSError("The system cannot find the file specified"),
+        ):
+            with self.assertRaises(RuntimeError) as raised:
+                agent.fix("corrige le bug")
+        message = str(raised.exception)
+        self.assertIn("./agent.py", message)
+        self.assertIn("python", message, "the message must show the portable form")
 
 
 if __name__ == "__main__":

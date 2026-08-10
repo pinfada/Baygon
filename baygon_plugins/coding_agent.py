@@ -34,6 +34,7 @@ coexist in the registry (default / explicitly requested).
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from typing import Any
@@ -52,13 +53,24 @@ class CodingAgent(DeveloperCapability):
     # ------------------------------------------------------------------
 
     def _run(self, args: list[str]) -> str:
-        completed = subprocess.run(
-            args,
-            capture_output=True,
-            text=True,
-            cwd=str(self.resolve_path(self.config.get("cwd"))),
-            timeout=int(self.config.get("timeout_seconds", 1800)),
-        )
+        try:
+            completed = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                cwd=str(self.resolve_path(self.config.get("cwd"))),
+                timeout=int(self.config.get("timeout_seconds", 1800)),
+            )
+        except OSError as exc:
+            # Typically a program the system cannot launch directly —
+            # a script without an interpreter on Windows. Say which
+            # command failed and how to declare it portably, rather
+            # than let a bare "cannot find the file" surface.
+            raise RuntimeError(
+                f"cannot launch the coding agent {args[0]!r}: {exc}. "
+                "When the program is not directly executable on this system, "
+                "declare its interpreter: [\"python\", \"agent.py\"]."
+            ) from exc
         if completed.returncode != 0:
             raise RuntimeError(
                 f"coding agent failed (exit {completed.returncode}): "
@@ -84,10 +96,22 @@ class CodingAgent(DeveloperCapability):
         if not command:
             return False
         program = str(command[0])
+        # A program looked up on PATH is only usable if it is found
+        # there; claiming otherwise would be a guess.
+        if not program.startswith("."):
+            return shutil.which(program) is not None
         # A relative program (e.g. ./agent.sh) belongs to the project.
-        if program.startswith("."):
-            return shutil.which(str(self.resolve_path(program))) is not None
-        return shutil.which(program) is not None
+        resolved = self.resolve_path(program)
+        if shutil.which(str(resolved)) is not None:
+            return True
+        # Windows has no executable bit, so `shutil.which` accepts only
+        # the extensions listed in PATHEXT — a rule it enforces since
+        # Python 3.12. Under it, a project that ships `./agent.py` and
+        # declares it would see its agent reported missing although the
+        # file is right there. A program the project ships *and*
+        # declares is taken at its word; if it truly cannot be launched,
+        # `fix()` says so and names the command.
+        return os.name == "nt" and resolved.is_file()
 
     def fix(self, description: str, feedback: str | None = None, **params: Any) -> dict[str, Any]:
         prompt = description

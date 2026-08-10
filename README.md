@@ -274,6 +274,39 @@ providers:
 $ python -m unittest discover -s tests
 ```
 
+La suite est **hermétique** : aucun test ne sort de la machine, chaque
+fournisseur est doublé, et elle tourne sur Linux, macOS et Windows (EF-018).
+
+### Tests IA réels (opt-in)
+
+Un modèle doublé prouve que Baygon appelle correctement l'adaptateur, jamais
+que la réponse d'un vrai modèle survit au trajet — un modèle réel renvoie de la
+prose, de la ponctuation, une première ligne vide, des blocs de raisonnement et
+parfois un refus. `tests/test_live_ai.py` rejoue **les mêmes chemins de code
+contre un endpoint qui répond vraiment**, et il est ignoré tant qu'aucun
+endpoint n'est déclaré — la suite normale et la CI restent hermétiques.
+
+```console
+$ export BAYGON_LIVE_AI_BASE_URL=http://localhost:11434/v1   # Ollama, vLLM, DeepSeek, Groq…
+$ export BAYGON_LIVE_AI_MODEL=deepseek-r1:8b
+$ export BAYGON_LIVE_AI_KEY_ENV=DEEPSEEK_API_KEY             # optionnel
+$ python -m unittest tests.test_live_ai -v
+```
+
+Ce qu'ils vérifient contre le vrai modèle : l'endpoint sert bien le modèle
+déclaré, une complétion revient en texte exploitable, la classification ne
+produit **jamais** autre chose qu'une intention connue ou un refus propre
+(Article 5), `--no-ai` ne joint réellement pas le modèle (EF-014) et un
+diagnostic complet passe de bout en bout. Les assertions portent sur les
+**contrats, jamais sur une réponse particulière** : un modèle est libre de
+classer une formulation comme il l'entend, ce qui doit tenir est que ce qui
+revient soit exploitable.
+
+La classe `UnreachableProviderTest` du même module tourne **toujours** : elle
+n'a besoin d'aucun modèle, seulement d'un port fermé, et démontre sur un vrai
+refus de connexion qu'un fournisseur injoignable dégrade au lieu de casser
+(ENF-006).
+
 ## Licence
 
 MIT — voir [LICENSE](LICENSE).
