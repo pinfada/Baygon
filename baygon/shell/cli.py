@@ -11,10 +11,63 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from typing import TextIO
 
 from baygon import __version__
+from baygon.core import events
 from baygon.core.errors import BaygonError, ValidationRequiredError
 from baygon.core.kernel import Kernel
+
+
+def attach_progress(kernel: Kernel, stream: TextIO) -> None:
+    """Report execution progress on `stream` as the plan runs (EF-020).
+
+    A command that calls an AI model can take seconds; going silent
+    until the answer is ready looks like a freeze. Progress is written
+    on the error stream so standard output keeps carrying nothing but
+    the machine-readable result.
+
+    The reporter only listens: a stream that cannot be written to
+    (closed pipe, full disk) must never take the execution down with it.
+    """
+    state = {"total": 0, "done": 0}
+
+    def write(line: str) -> None:
+        try:
+            stream.write(line)
+            stream.flush()
+        except Exception:
+            # Progress is a courtesy, never a dependency.
+            return
+
+    def started(event: events.Event) -> None:
+        state["total"] = int(event.payload.get("steps", 0))
+        state["done"] = 0
+
+    def step_started(event: events.Event) -> None:
+        position = f"{state['done'] + 1}/{state['total']}" if state["total"] else "…"
+        write(f"  [{position}] {_label(event)} …\n")
+
+    def step_finished(event: events.Event) -> None:
+        state["done"] += 1
+        payload = event.payload
+        if payload.get("reused"):
+            outcome = "reused"
+        else:
+            outcome = "ok" if payload.get("success") else "failed"
+        duration = payload.get("duration_ms")
+        timing = f" ({duration:.0f} ms)" if isinstance(duration, (int, float)) else ""
+        position = f"{state['done']}/{state['total']}" if state["total"] else "…"
+        write(f"  [{position}] {_label(event)} {outcome}{timing}\n")
+
+    kernel.bus.subscribe(events.EXECUTION_STARTED, started)
+    kernel.bus.subscribe(events.STEP_STARTED, step_started)
+    kernel.bus.subscribe(events.STEP_FINISHED, step_finished)
+
+
+def _label(event: events.Event) -> str:
+    payload = event.payload
+    return f"{payload.get('capability', '?')}.{payload.get('action', '?')}"
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -137,6 +190,16 @@ def _select_kernel(args: argparse.Namespace) -> Kernel | None:
     return target.resolve(intent_text, explicit=args.project)
 
 
+def _report_progress(kernel: Kernel) -> None:
+    """Show progress on an interactive terminal only.
+
+    Piped or redirected output is being read by a program, not by a
+    person waiting: staying silent there keeps the stream clean.
+    """
+    if sys.stderr.isatty():
+        attach_progress(kernel, sys.stderr)
+
+
 def _dispatch(kernel: Kernel, args: argparse.Namespace) -> int:
     if args.command == "validate":
         print(f"ok: {kernel.config.path} is valid (project {kernel.config.project_name!r})")
@@ -188,11 +251,13 @@ def _dispatch(kernel: Kernel, args: argparse.Namespace) -> int:
             print("\nThis plan contains sensitive actions.", file=sys.stderr)
             print("Re-run with --yes to approve it.", file=sys.stderr)
             return 3
+        _report_progress(kernel)
         result = kernel.execute(plan, approved=args.yes)
         print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False, default=str))
         return 0 if result.success else 1
 
     if args.command == "resume":
+        _report_progress(kernel)
         result = kernel.resume(plan_id=args.plan, approved=args.yes)
         print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False, default=str))
         return 0 if result.success else 1

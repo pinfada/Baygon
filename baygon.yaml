@@ -40,6 +40,19 @@ providers:
         development: {latency_ms: 12, error_rate: 0.0}
         staging: {latency_ms: 35, error_rate: 0.01}
         production: {latency_ms: 48, error_rate: 0.002}
+  # Traces complete the observability triptych of chapter 8. This demo
+  # project has no tracing backend to point at, so the adapter is shown
+  # rather than declared — uncomment it against a real Tempo instance.
+  # tracing:
+  #   type: traces
+  #   plugin: baygon_plugins.tempo_traces:TempoTraces
+  #   default: true
+  #   options:
+  #     url: https://tempo.example.invalid
+  #     queries:
+  #       staging: 'service.name="baygon" && env="stg"'
+  #       production: 'service.name="baygon" && env="prod"'
+  #     min_duration_ms: 500
   secrets:
     type: secrets
     plugin: baygon_plugins.env_secrets:EnvSecrets
@@ -80,6 +93,7 @@ ai:
 observability:
   logs: logging
   metrics: monitoring
+  # traces: tracing
 
 commands:
   deploy: "deploy"

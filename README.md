@@ -63,7 +63,7 @@ Composants du noyau (`baygon/core/`) :
   secret). Il prépare, il n'agit pas.
 
 Les contrats de capacités (`baygon/capabilities/`) définissent *ce qui peut
-être fait*, jamais *comment* : repository, deployment, logs, metrics,
+être fait*, jamais *comment* : repository, deployment, logs, metrics, traces,
 database, secrets, notification, ai.
 
 Les implémentations de référence (`baygon_plugins/`) vivent **hors du noyau**
@@ -91,10 +91,29 @@ informations de connexion et la commande console à partir d'un DSN lu dans
 l'environnement — le mot de passe n'est jamais exposé, la commande référence
 la variable (`psql "$STAGING_DATABASE_URL"`). Permission `database` requise.
 
-Côté observabilité, deux adaptateurs réels : **Loki** pour la capacité `logs`
-(requête LogQL par environnement) et **Prometheus** pour la capacité `metrics`
-(requêtes PromQL avec substitution de l'environnement). Baygon consulte, il ne
-stocke jamais (EF-007).
+Côté observabilité, trois adaptateurs réels couvrent les trois signaux du
+chapitre 8 : **Loki** pour la capacité `logs` (requête LogQL par
+environnement), **Prometheus** pour la capacité `metrics` (requêtes PromQL avec
+substitution de l'environnement) et **Tempo** pour la capacité `traces`
+(recherche par environnement, traces les plus lentes d'abord, seuil
+`min_duration_ms` optionnel). Baygon consulte, il ne stocke jamais (EF-007).
+
+Les logs disent *que* quelque chose ne va pas, les traces disent *où* le temps
+passe : quand une capacité `traces` est déclarée, le diagnostic
+(« Pourquoi la production est lente ? ») la collecte en plus des logs, des
+métriques et du statut de déploiement. Sans elle, le diagnostic fonctionne à
+l'identique (ENF-006).
+
+**Durée de chaque action** (ENF-008) : chaque étape d'un plan rapporte son
+début, sa fin et sa durée (`started_at`, `finished_at`, `duration_ms`), et
+l'exécution rapporte la sienne. Les événements `StepFinished` et
+`ExecutionFinished` portent la même mesure. Une étape reprise (`resume`) est
+marquée `reused` et sa durée est nulle : elle n'a pas été exécutée.
+
+**Progression** (EF-020) : sur un terminal interactif, `baygon run` et
+`baygon resume` affichent l'avancement étape par étape — `[3/4] ai.complete …`
+— sur la sortie d'erreur, pour que la sortie standard ne contienne rien
+d'autre que le résultat exploitable par un programme.
 
 **Boucle Dev → QA → Revue** : « Résous le bug de paiement » déclenche
 l'intention `FixBug` — l'agent codeur (capacité `developer`) produit la
@@ -160,6 +179,7 @@ $ baygon plan "Déploie en production"   # construire et expliquer le plan
 $ baygon run "deploy to staging"        # exécuter
 $ baygon run "Déploie en production" --yes   # action sensible : validation explicite
 $ baygon run "montre-moi les erreurs des dernières 24 heures"
+$ baygon run "montre-moi les traces de la production"
 $ baygon run "analyse l'incident en production"
 $ baygon history                        # historique des intentions exécutées
 $ baygon context                        # contexte construit par le Context Engine
@@ -171,6 +191,12 @@ $ baygon run "ouvre une console ssh en production"   # commande de connexion (pe
 avec `baygon resume` — les étapes déjà réussies ne sont jamais ré-exécutées,
 leurs résultats enregistrés sont réutilisés et l'exécution redémarre à l'étape
 en échec. La validation des plans sensibles s'applique aussi à la reprise.
+La reprise rejoue **le plan approuvé, pas un autre** : les options de session
+(`--no-ai`, `--model`) voyagent avec le plan, donc une exécution lancée en mode
+déterministe ne se réveille jamais avec un appel de modèle (EF-014). Et un
+résultat enregistré n'est réutilisé que si l'étape correspondante existe
+toujours à l'identique — si `baygon.yaml` a changé entre l'échec et la reprise,
+l'étape est simplement ré-exécutée.
 
 ### Multi-projets
 

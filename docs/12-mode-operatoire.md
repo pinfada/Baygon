@@ -79,6 +79,7 @@ $ baygon explain "restaure la production"  # comprendre le raisonnement
 $ baygon run "deploy to staging"         # exécuter
 $ baygon run "Déploie en production" --yes   # action sensible : validation
 $ baygon run "montre-moi les erreurs des dernières 24 heures en production"
+$ baygon run "montre-moi les traces de la production"      # capacité traces
 $ baygon run "analyse le dernier incident en production"   # diagnostic complet
 $ baygon run "pourquoi la production est lente ?"          # idem : diagnostic
 $ baygon run "ouvre une console ssh en production"
@@ -95,11 +96,28 @@ $ baygon capabilities                    # capacités et implémentations active
 $ baygon projects                        # projets gérés (voir §8)
 ```
 
-Les quinze intentions reconnues : `DeployProject`, `RollbackDeployment`,
+Les seize intentions reconnues : `DeployProject`, `RollbackDeployment`,
 `FixBug`, `ProposeChanges`, `BackupProject`, `RestoreProject`, `OpenConsole`,
 `RestartService`, `ShowDatabase`, `ShowStorage`, `Diagnose`, `ShowLogs`,
-`ShowMetrics`, `ShowStatus`, `ShowHistory` — plus toute commande déclarée dans
-la section `commands` de `baygon.yaml`, reconnue par son nom.
+`ShowTraces`, `ShowMetrics`, `ShowStatus`, `ShowHistory` — plus toute commande
+déclarée dans la section `commands` de `baygon.yaml`, reconnue par son nom.
+
+Sur un terminal interactif, `baygon run` et `baygon resume` affichent
+l'avancement du plan sur la sortie d'erreur, étape par étape et avec sa durée
+(EF-020) — la sortie standard, elle, ne contient que le résultat JSON :
+
+```console
+$ baygon run "pourquoi la production est lente ?"
+  [1/4] logs.fetch …
+  [1/4] logs.fetch ok (12 ms)
+  [2/4] metrics.fetch ok (8 ms)
+  [3/4] deployment.status ok (140 ms)
+  [4/4] ai.complete ok (2140 ms)
+```
+
+`baygon resume` rejoue **le plan qui a échoué** : les options de session
+(`--no-ai`, `--model`) sont enregistrées avec le plan, donc une exécution
+lancée en mode déterministe est reprise en mode déterministe.
 
 Vous n'avez pas à connaître ces noms : **décrivez le symptôme**, Baygon
 reconnaît l'intention.
@@ -171,6 +189,8 @@ secrets vont **toujours** dans l'environnement, jamais dans le fichier.
 | logs        | `baygon_plugins.loki_logs:LokiLogs`                 | `LOKI_TOKEN` (option) |
 | logs        | `baygon_plugins.file_logs:FileLogs`                 | —              |
 | metrics     | `baygon_plugins.prometheus_metrics:PrometheusMetrics` | `PROMETHEUS_TOKEN` (option) |
+| metrics     | `baygon_plugins.static_metrics:StaticMetrics`       | —              |
+| traces      | `baygon_plugins.tempo_traces:TempoTraces`           | `TEMPO_TOKEN` (option) |
 | database    | `baygon_plugins.postgres_database:PostgresDatabase` | variable DSN (ex. `PROD_DATABASE_URL`) |
 | storage/backup/recovery | `baygon_plugins.s3:S3Storage` / `S3Backup` / `S3Recovery` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` |
 | ssh         | `baygon_plugins.ssh_access:SSHAccess`               | clés ssh usuelles |

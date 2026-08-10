@@ -123,6 +123,22 @@ class MetricsCapability(CapabilityImplementation):
     def fetch(self, environment: str, **params: Any) -> dict[str, Any]: ...
 
 
+class TracesCapability(CapabilityImplementation):
+    """Distributed trace consultation. Baygon never stores traces.
+
+    A trace is normalized to a provider-independent shape so the rest of
+    Baygon never learns which backend answered:
+    ``{"id", "service", "name", "duration_ms", "start"}``.
+    """
+
+    capability = "traces"
+
+    @abc.abstractmethod
+    def fetch(
+        self, environment: str, since_hours: int = 1, **params: Any
+    ) -> list[dict[str, Any]]: ...
+
+
 class DatabaseCapability(CapabilityImplementation):
     """Database access through the provider's own mechanisms."""
 
@@ -276,6 +292,7 @@ CAPABILITY_CONTRACTS: dict[str, type[CapabilityImplementation]] = {
         DeploymentCapability,
         LogsCapability,
         MetricsCapability,
+        TracesCapability,
         DatabaseCapability,
         SecretsCapability,
         NotificationCapability,

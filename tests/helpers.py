@@ -17,6 +17,7 @@ from baygon.capabilities import (
     RecoveryCapability,
     RepositoryCapability,
     ReviewCapability,
+    TracesCapability,
     WorkspaceCapability,
 )
 
@@ -95,6 +96,14 @@ class FakeMetrics(MetricsCapability):
         return {"latency_ms": 10}
 
 
+class FakeTraces(TracesCapability):
+    identifier = "fake-traces"
+
+    def fetch(self, environment: str, since_hours: int = 1, **params: Any) -> list[dict[str, Any]]:
+        return [{"id": "trace-1", "service": "checkout", "name": "POST /pay",
+                 "duration_ms": 1200.0, "environment": environment}]
+
+
 class CountingRepository(FakeRepository):
     """Counts calls so tests can prove a step was not re-executed."""
 
@@ -127,6 +136,32 @@ class FlakyDeployment(FakeDeployment):
             self.fail_next = False
             raise RuntimeError("transient provider outage")
         return super().deploy(environment, **params)
+
+
+#: Shared switch: how many times FlakyStatus.status must still fail.
+FLAKY_STATUS_FAILURES: list[bool] = []
+
+
+class FlakyStatusDeployment(FakeDeployment):
+    """`status` fails while the switch is armed — a transient read outage."""
+
+    identifier = "flaky-status"
+
+    def status(self, environment: str, **params: Any) -> dict[str, Any]:
+        if FLAKY_STATUS_FAILURES and FLAKY_STATUS_FAILURES.pop():
+            raise RuntimeError("status backend unreachable")
+        return super().status(environment, **params)
+
+
+class RecordingAI(AICapability):
+    """Records every call so a test can prove the model was never used."""
+
+    identifier = "recording-ai"
+    calls: list[str] = []
+
+    def complete(self, prompt: str, context: dict[str, Any] | None = None, **params: Any) -> str:
+        RecordingAI.calls.append(prompt)
+        return "analysis"
 
 
 class FakeWorkspace(WorkspaceCapability):

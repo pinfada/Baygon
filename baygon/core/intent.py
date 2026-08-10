@@ -86,6 +86,11 @@ class Plan:
     max_rounds: int = 1
     #: Step that receives the previous round's failure report as feedback.
     feedback_step: str | None = None
+    #: Session options that shaped this plan. They travel with it so a
+    #: resumed execution replays the plan the user approved, not another
+    #: one (EF-014, ENF-017).
+    ai: bool = True
+    ai_model: str | None = None
 
     @property
     def risk(self) -> RiskLevel:
@@ -131,6 +136,7 @@ class Plan:
             "requires_validation": self.requires_validation,
             "max_rounds": self.max_rounds,
             "feedback_step": self.feedback_step,
+            "session": {"ai": self.ai, "ai_model": self.ai_model},
             "reasoning": self.reasoning,
             "steps": [step.to_dict() for step in self.steps],
         }
@@ -167,6 +173,7 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
         r"|\b(?:a|ont)\s+(?:doubl[ée]\w*|tripl[ée]\w*|explos[ée]\w*)\b"
         r"|\best\s+tomb[ée]\w*\b|\bplante\w*\b|\bcrash\w*\b",
         re.IGNORECASE)),
+    ("ShowTraces", re.compile(r"\b(traces?|tracing|spans?)\b", re.IGNORECASE)),
     ("ShowLogs", re.compile(r"\b(logs?|journaux|erreurs?|errors?)\b", re.IGNORECASE)),
     ("ShowMetrics", re.compile(r"\b(metrics?|m[ée]triques?|performances?|lente?s?)\b", re.IGNORECASE)),
     ("ShowStatus", re.compile(r"\b(status|statut|[ée]tat)\b", re.IGNORECASE)),
@@ -324,6 +331,8 @@ class IntentEngine:
             intent=intent,
             steps=steps,
             reasoning=reasoning,
+            ai=ai,
+            ai_model=ai_model,
             **extras,
         )
 
@@ -407,6 +416,15 @@ class IntentEngine:
             [Step(id="1", capability="logs", action="fetch",
                   parameters={"environment": env, "since_hours": since}, risk=RiskLevel.LOW)],
             [f"Log consultation on {env} over the last {since}h is a read-only action"],
+        )
+
+    def _plan_show_traces(self, intent: Intent) -> tuple[list[Step], list[str]]:
+        env = intent.parameters["environment"]
+        since = intent.parameters.get("since_hours", 1)
+        return (
+            [Step(id="1", capability="traces", action="fetch",
+                  parameters={"environment": env, "since_hours": since}, risk=RiskLevel.LOW)],
+            [f"Trace consultation on {env} over the last {since}h is a read-only action"],
         )
 
     def _plan_show_metrics(self, intent: Intent) -> tuple[list[Step], list[str]]:
@@ -547,6 +565,17 @@ class IntentEngine:
             Step(id="3", capability="deployment", action="status",
                  parameters={"environment": env}, risk=RiskLevel.LOW),
         ]
+        if self._registry.is_available("traces"):
+            # Traces say *where* the time goes; logs and metrics only say
+            # that something is wrong (EF-007).
+            reasoning.append(
+                "Tracing capability available: distributed traces are collected too"
+            )
+            steps.append(
+                Step(id=str(len(steps) + 1), capability="traces", action="fetch",
+                     parameters={"environment": env, "since_hours": since},
+                     risk=RiskLevel.LOW)
+            )
         if self._session_ai and self._registry.is_available("ai"):
             chosen = self._session_ai_model
             reasoning.append(
@@ -554,10 +583,11 @@ class IntentEngine:
                 + (f"the {chosen!r} model" if chosen else "the model")
                 + " for analysis"
             )
+            collected = [step.id for step in steps]
             steps.append(
-                Step(id="4", capability="ai", action="complete",
+                Step(id=str(len(steps) + 1), capability="ai", action="complete",
                      parameters={"prompt": f"Diagnose the state of {self._config.project_name} on {env}"},
-                     depends_on=["1", "2", "3"], risk=RiskLevel.LOW,
+                     depends_on=collected, risk=RiskLevel.LOW,
                      implementation=chosen)
             )
         else:

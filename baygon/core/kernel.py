@@ -11,6 +11,7 @@ Lifecycle:
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -28,17 +29,36 @@ from baygon.core.registry import CapabilityRegistry
 
 def _plan_with_feedback(plan: Plan, feedback: str) -> Plan:
     """Copy of the plan with the failure report injected into the
-    feedback step's parameters. Same id: it is the same intention."""
+    feedback step's parameters. Same id: it is the same intention.
+
+    Every other field of every step is carried over untouched — in
+    particular the explicitly requested implementation, which a retry
+    round must never silently trade for the default one.
+    """
     steps = []
     for step in plan.steps:
         parameters = dict(step.parameters)
         if step.id == plan.feedback_step:
             parameters["feedback"] = feedback
-        steps.append(Step(id=step.id, capability=step.capability, action=step.action,
-                          parameters=parameters, depends_on=list(step.depends_on),
-                          risk=step.risk))
-    return Plan(id=plan.id, intent=plan.intent, steps=steps, reasoning=plan.reasoning,
-                max_rounds=plan.max_rounds, feedback_step=plan.feedback_step)
+        steps.append(replace(step, parameters=parameters, depends_on=list(step.depends_on)))
+    return replace(plan, steps=steps)
+
+
+def _reusable(plan: Plan, recorded: list[dict[str, Any]]) -> dict[str, Any]:
+    """Recorded outputs that still belong to a step of the rebuilt plan.
+
+    A result belongs to a step, not to an identifier. Between the
+    failure and the resume, ``baygon.yaml`` may have changed and the
+    rebuilt plan may no longer be step-for-step identical; feeding a
+    stale output into a step that is not the one that produced it would
+    be worse than simply running that step again.
+    """
+    expected = {step.id: (step.capability, step.action) for step in plan.steps}
+    return {
+        step["id"]: step["output"]
+        for step in recorded
+        if step["success"] and expected.get(step["id"]) == (step["capability"], step["action"])
+    }
 
 
 class Kernel:
@@ -199,20 +219,26 @@ class Kernel:
 
         Steps that already succeeded are not re-executed: their recorded
         outputs are reused and execution restarts at the failed step.
+
+        The plan is rebuilt with the session options it was built with,
+        so resuming replays the intention the user approved — a run made
+        without AI never grows an AI step on resume (EF-014).
         """
         entry = self._last_failure(plan_id)
         if entry is None:
             target = f" for plan {plan_id!r}" if plan_id else ""
             raise BaygonError(f"nothing to resume{target}: no failed execution recorded")
+        recorded = entry["plan"]
+        session = recorded.get("session") or {}
         plan = self.intent_engine.plan(
-            entry["input"], source=entry["plan"]["intent"].get("source", "shell")
+            entry["input"],
+            source=recorded["intent"].get("source", "shell"),
+            ai=bool(session.get("ai", True)),
+            ai_model=session.get("ai_model"),
         )
-        completed = {
-            step["id"]: step["output"]
-            for step in entry["result"]["steps"]
-            if step["success"]
-        }
-        return self.execute(plan, approved=approved, completed=completed)
+        return self.execute(
+            plan, approved=approved, completed=_reusable(plan, entry["result"]["steps"])
+        )
 
     def _last_failure(self, plan_id: str | None) -> dict[str, Any] | None:
         for entry in reversed(self.audit.entries(limit=1000)):
