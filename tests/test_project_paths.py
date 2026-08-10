@@ -40,8 +40,10 @@ SHELL_YAML = textwrap.dedent(
 
 #: A coding agent that only reports where it was run. Written in Python
 #: rather than as a shell script so the test states the same thing on
-#: every operating system Baygon claims to support (EF-018).
-AGENT_SCRIPT = "import os; print('agent ran in', os.getcwd())\n"
+#: every operating system Baygon claims to support (EF-018). It reports
+#: the real path: Windows hands short 8.3 names ("RUNNER~1") to child
+#: processes, which name the same directory by a different string.
+AGENT_SCRIPT = "import os; print(os.path.realpath(os.getcwd()))\n"
 
 
 class ProjectRelativePathTest(unittest.TestCase):
@@ -71,7 +73,8 @@ class ProjectRelativePathTest(unittest.TestCase):
     def test_coding_agent_runs_inside_the_project(self) -> None:
         developer = self.kernel.registry.resolve("developer")
         result = developer.fix(description="peu importe")
-        self.assertIn(str(self.project.resolve()), result["output"])
+        reported = Path(result["output"].strip().splitlines()[-1])
+        self.assertEqual(reported.resolve(), self.project.resolve())
 
     def test_a_relative_agent_program_is_resolved_against_the_project(self) -> None:
         """`command: ["./agent"]` names a program the project ships."""
