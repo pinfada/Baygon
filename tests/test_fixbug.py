@@ -8,6 +8,7 @@ report injected as feedback to the developer step — bounded rounds,
 every attempt audited, final failure notified (chapter 9 error flow).
 """
 
+import os
 import tempfile
 import textwrap
 import unittest
@@ -219,7 +220,11 @@ class AgentAvailabilityTest(unittest.TestCase):
         agent = self._agent("no-such-agent-anywhere", by_extension=True)
         self.assertFalse(agent.health_check())
 
+    @unittest.skipIf(os.name == "nt", "Windows has no executable bit to require")
     def test_the_executable_bit_still_decides_where_there_is_one(self) -> None:
+        """Here the seam is not enough: the assertion is about the real
+        `shutil.which`, which judges by PATHEXT on a Windows host
+        whatever this adapter thinks."""
         agent = self._agent("./agent.py", by_extension=False)
         self.script.chmod(0o644)
         self.assertFalse(agent.health_check())
