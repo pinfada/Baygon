@@ -77,9 +77,18 @@ class ProjectRelativePathTest(unittest.TestCase):
         self.assertEqual(reported.resolve(), self.project.resolve())
 
     def test_a_relative_agent_program_is_resolved_against_the_project(self) -> None:
-        """`command: ["./agent"]` names a program the project ships."""
-        agent = CodingAgent({"command": ["./agent.py"]})
-        (self.project / "agent.py").chmod(0o755)
+        """`command: ["./agent"]` names a program the project ships.
+
+        What counts as "a program" is the platform's business: an
+        extension listed in PATHEXT on Windows, the executable bit
+        elsewhere. The fixture follows the platform so the assertion
+        stays about the *path* being resolved against the project.
+        """
+        name = "agent.bat" if os.name == "nt" else "agent.sh"
+        program = self.project / name
+        program.write_text("", encoding="utf-8")
+        program.chmod(0o755)
+        agent = CodingAgent({"command": [f"./{name}"]})
         agent.project_dir = self.project
         self.assertTrue(agent.health_check())
 
