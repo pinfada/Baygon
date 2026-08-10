@@ -29,9 +29,21 @@ PAGE = r"""<!doctype html>
   .row select { width: auto; flex: 1 1 12rem; margin-bottom: 0; }
   .stale { color: #b26a00; font-size: .85rem; margin: -.25rem 0 .6rem; }
   button { cursor: pointer; }
+  button:disabled { opacity: .5; cursor: progress; }
   pre { background: #8881; padding: .75rem; border-radius: .4rem; overflow-x: auto;
         white-space: pre-wrap; word-break: break-word; font-size: .85rem; }
   #approve { display: none; background: #c62828; color: #fff; border: none; }
+  /* Une étape IA prend des dizaines de secondes : sans signe de vie,
+     l'attente ressemble à une panne et invite à recliquer. */
+  #status { display: none; align-items: center; gap: .6rem; font-size: .9rem;
+            margin: 0 0 .75rem; opacity: .8; }
+  #status.on { display: flex; }
+  .spinner { width: 1rem; height: 1rem; flex: none; border-radius: 50%;
+             border: 2px solid #8884; border-top-color: currentColor;
+             animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  /* Le compteur porte l'information ; la rotation n'est que décor. */
+  @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
 </style>
 </head>
 <body>
@@ -56,10 +68,33 @@ PAGE = r"""<!doctype html>
   <button onclick="get('/context')">Contexte</button>
   <button onclick="get('/capabilities')">Capacités</button>
 </div>
-<pre id="out">Prêt. Saisissez votre jeton puis exprimez une intention.</pre>
+<p id="status" aria-live="polite"><span class="spinner"></span><span id="statusText"></span></p>
+<pre id="out" aria-busy="false">Prêt. Saisissez votre jeton puis exprimez une intention.</pre>
 <script>
 const out = document.getElementById('out');
 const approve = document.getElementById('approve');
+const statusBar = document.getElementById('status');
+const statusText = document.getElementById('statusText');
+let ticker = null;
+
+// Une requête en cours désarme les boutons : un déploiement approuvé
+// deux fois est un déploiement fait deux fois. Le compteur dit que
+// l'attente est vivante — une étape IA dure des dizaines de secondes.
+function busy(on, label) {
+  for (const button of document.querySelectorAll('button')) button.disabled = on;
+  statusBar.classList.toggle('on', on);
+  out.setAttribute('aria-busy', on ? 'true' : 'false');
+  if (ticker) { clearInterval(ticker); ticker = null; }
+  if (!on) return;
+  const started = Date.now();
+  const tick = () => {
+    const seconds = Math.round((Date.now() - started) / 1000);
+    statusText.textContent = label + ' — ' + seconds + ' s';
+  };
+  tick();
+  ticker = setInterval(tick, 1000);
+}
+
 function headers() {
   return { 'Content-Type': 'application/json',
            'Authorization': 'Bearer ' + document.getElementById('token').value };
@@ -119,15 +154,33 @@ async function call(path, approved = false) {
   const project = document.getElementById('project').value;
   if (project) body.project = project;
   if (approved) body.approved = true;
-  const r = await fetch(path, { method: 'POST', headers: headers(),
-                                body: JSON.stringify(body) });
-  show(r.status, await r.json());
+  const ai = document.getElementById('mode').value === 'ai';
+  busy(true, approved ? 'Exécution approuvée en cours'
+       : path === '/plan' ? 'Construction du plan'
+       : ai ? 'Exécution en cours (une étape IA peut durer)' : 'Exécution en cours');
+  try {
+    const r = await fetch(path, { method: 'POST', headers: headers(),
+                                  body: JSON.stringify(body) });
+    show(r.status, await r.json());
+  } catch (e) {
+    // Une panne réseau doit se voir, pas disparaître dans la console.
+    show(0, { error: 'Requête impossible : ' + e });
+  } finally {
+    busy(false);   // sans quoi une erreur laisserait la page figée
+  }
 }
 async function get(path) {
   const project = document.getElementById('project').value;
   if (project) path += (path.includes('?') ? '&' : '?') + 'project=' + encodeURIComponent(project);
-  const r = await fetch(path, { headers: headers() });
-  show(r.status, await r.json());
+  busy(true, 'Lecture en cours');
+  try {
+    const r = await fetch(path, { headers: headers() });
+    show(r.status, await r.json());
+  } catch (e) {
+    show(0, { error: 'Requête impossible : ' + e });
+  } finally {
+    busy(false);
+  }
 }
 </script>
 </body>

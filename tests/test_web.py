@@ -95,6 +95,31 @@ class WebUiTest(unittest.TestCase):
             "PAGE must stay a raw string (r\"\"\"...\"\"\")",
         )
 
+    def test_every_element_the_script_reaches_for_exists(self) -> None:
+        """`getElementById` on a missing id returns null, and the next
+        line throws — silently, in the browser, where no test looks."""
+        _, _, body = self._get("/")
+        wanted = set(re.findall(r"getElementById\('(\w+)'\)", script_of(body)))
+        present = set(re.findall(r"\bid=\"(\w+)\"", body))
+        self.assertTrue(wanted, "the script reaches for no element at all")
+        self.assertEqual(wanted - present, set())
+
+    def test_a_request_in_flight_disables_the_buttons(self) -> None:
+        """A deployment approved twice is a deployment done twice.
+
+        The page must disarm its buttons while a request is running and
+        re-arm them whatever the outcome — a `finally`, not a happy
+        path, or one network error freezes the page for good.
+        """
+        _, _, body = self._get("/")
+        script = script_of(body)
+        self.assertIn("button.disabled = on", script)
+        self.assertEqual(
+            script.count("busy(false)"), script.count("} finally {"),
+            "every busy(true) must be released in a finally block",
+        )
+        self.assertGreaterEqual(script.count("} finally {"), 2)
+
     def test_every_handler_the_page_wires_up_is_defined(self) -> None:
         """An onclick naming a function that does not exist is a dead button."""
         _, _, body = self._get("/")

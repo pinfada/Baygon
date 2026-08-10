@@ -242,6 +242,13 @@ $ baygon serve --host 127.0.0.1 --port 8787
 Un plan sensible renvoie `428` tant que `"approved": true` n'est pas fourni :
 même règle que le terminal, Baygon propose, l'utilisateur décide.
 
+Pendant qu'une requête est en vol, la page **désarme ses boutons** et affiche un
+indicateur avec le temps écoulé — une étape IA dure des dizaines de secondes, et
+sans signe de vie l'attente ressemble à une panne et invite à recliquer. Un
+déploiement approuvé deux fois est un déploiement fait deux fois. Les boutons
+sont réarmés quelle que soit l'issue, y compris sur panne réseau, qui s'affiche
+au lieu de disparaître dans la console.
+
 **Durcissement** : limitation de débit par client (120 req/min par défaut,
 réglable via `--rate-limit`, `429` + `Retry-After` au-delà, `/health` exempté),
 en-têtes de sécurité (`nosniff`, `no-store`, `X-Frame-Options: DENY` sur la
