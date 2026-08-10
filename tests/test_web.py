@@ -95,6 +95,33 @@ class WebUiTest(unittest.TestCase):
             "PAGE must stay a raw string (r\"\"\"...\"\"\")",
         )
 
+    def test_every_project_scoped_read_says_which_project(self) -> None:
+        """With several projects served, an anonymous read is refused.
+
+        `/models` was fetched bare, so the model selector stayed empty
+        on a multi-project server — the endpoint answered 400 and the
+        page swallowed it. Only `/projects` may be asked without naming
+        one, since that is the question it answers.
+        """
+        _, _, body = self._get("/")
+        script = script_of(body)
+        bare = [
+            path for path in re.findall(r"fetch\('(/[\w/]+)'", script)
+            if path != "/projects"
+        ]
+        self.assertEqual(
+            bare, [],
+            f"these reads do not route to a project: {bare}; wrap them in withProject()",
+        )
+        self.assertIn("withProject('/models')", script)
+
+    def test_changing_the_project_reloads_its_models(self) -> None:
+        """Models are declared per project, so the list follows it."""
+        _, _, body = self._get("/")
+        select = re.search(r"<select id=\"project\"[^>]*>", body)
+        self.assertIsNotNone(select)
+        self.assertIn("loadModels()", select.group(0))
+
     def test_every_element_the_script_reaches_for_exists(self) -> None:
         """`getElementById` on a missing id returns null, and the next
         line throws — silently, in the browser, where no test looks."""

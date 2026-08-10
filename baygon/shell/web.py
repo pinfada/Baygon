@@ -49,14 +49,16 @@ PAGE = r"""<!doctype html>
 <body>
 <h1>Baygon <small>— une intention, une réponse, depuis n'importe où</small></h1>
 <input id="token" type="password" placeholder="Jeton d'accès (Authorization: Bearer …)"
-       onchange="loadModels(); loadProjects()">
+       onchange="refresh()">
 <div class="row">
   <select id="mode" onchange="onMode()">
     <option value="ai">Mode IA — Baygon interprète les formulations libres</option>
     <option value="noai">Sans IA — règles déterministes uniquement</option>
   </select>
   <select id="model"><option value="">Modèle par défaut</option></select>
-  <select id="project"><option value="">Projet : automatique</option></select>
+  <select id="project" onchange="loadModels()">
+    <option value="">Projet : automatique</option>
+  </select>
 </div>
 <p id="freshness" class="stale"></p>
 <input id="intent" placeholder="Votre intention — ex. « analyse l'incident en production »">
@@ -95,6 +97,22 @@ function busy(on, label) {
   ticker = setInterval(tick, 1000);
 }
 
+// Tout ce qui lit des données d'un projet doit dire lequel : avec
+// plusieurs projets servis, une requête anonyme est refusée (400).
+// Un seul endroit le fait, pour qu'aucun appel ne puisse l'oublier.
+function withProject(path) {
+  const project = document.getElementById('project').value;
+  if (!project) return path;
+  return path + (path.includes('?') ? '&' : '?')
+       + 'project=' + encodeURIComponent(project);
+}
+
+// Les projets d'abord : la liste des modèles dépend du projet choisi.
+async function refresh() {
+  await loadProjects();
+  await loadModels();
+}
+
 function headers() {
   return { 'Content-Type': 'application/json',
            'Authorization': 'Bearer ' + document.getElementById('token').value };
@@ -129,7 +147,7 @@ async function loadModels() {
   const select = document.getElementById('model');
   const notes = document.getElementById('freshness');
   try {
-    const r = await fetch('/models', { headers: headers() });
+    const r = await fetch(withProject('/models'), { headers: headers() });
     if (!r.ok) return;
     const models = await r.json();
     select.innerHTML = '<option value="">Modèle par défaut</option>';
@@ -170,8 +188,7 @@ async function call(path, approved = false) {
   }
 }
 async function get(path) {
-  const project = document.getElementById('project').value;
-  if (project) path += (path.includes('?') ? '&' : '?') + 'project=' + encodeURIComponent(project);
+  path = withProject(path);
   busy(true, 'Lecture en cours');
   try {
     const r = await fetch(path, { headers: headers() });
