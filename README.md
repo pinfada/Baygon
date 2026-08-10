@@ -115,6 +115,11 @@ marquée `reused` et sa durée est nulle : elle n'a pas été exécutée.
 — sur la sortie d'erreur, pour que la sortie standard ne contienne rien
 d'autre que le résultat exploitable par un programme.
 
+C'est la règle générale des deux flux : **la sortie standard porte le
+résultat, la sortie d'erreur porte ce qu'un humain lit**. Les notifications
+console la suivent aussi, si bien que `baygon run … | jq` reste valide même
+quand un plan notifie.
+
 **Boucle Dev → QA → Revue** : « Résous le bug de paiement » déclenche
 l'intention `FixBug` — l'agent codeur (capacité `developer`) produit la
 correction, Baygon exécute la commande `test` déclarée comme contrôle qualité

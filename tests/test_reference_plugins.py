@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from baygon_plugins.console_notification import ConsoleNotification
@@ -129,11 +129,23 @@ class StaticMetricsTest(unittest.TestCase):
 
 class ConsoleNotificationTest(unittest.TestCase):
     def test_the_message_is_printed_and_reported_as_delivered(self) -> None:
-        buffer = io.StringIO()
-        with redirect_stdout(buffer):
+        errors = io.StringIO()
+        with redirect_stderr(errors):
             result = ConsoleNotification({}).notify("deployment finished")
-        self.assertIn("deployment finished", buffer.getvalue())
+        self.assertIn("deployment finished", errors.getvalue())
         self.assertEqual(result, {"delivered": True, "message": "deployment finished"})
+
+    def test_the_notification_never_pollutes_standard_output(self) -> None:
+        """Standard output carries the result a program will parse.
+
+        A notification printed there lands in the middle of the JSON of
+        `baygon run` and turns a pipe into a parse error.
+        """
+        out, errors = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(errors):
+            ConsoleNotification({}).notify("deployment finished")
+        self.assertEqual(out.getvalue(), "")
+        self.assertTrue(errors.getvalue())
 
 
 if __name__ == "__main__":
