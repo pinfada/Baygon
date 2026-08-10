@@ -269,9 +269,14 @@ class IntentEngine:
         # model fails or declines, the behaviour is unchanged (EF-014).
         classified = self._classify_with_ai(cleaned, ai_model) if ai else None
         if classified is not None:
+            parameters = self._extract_parameters(cleaned)
+            if classified.startswith("RunCommand:"):
+                # The model picked one of the project's own commands.
+                classified, command = classified.split(":", 1)
+                parameters["command"] = command
             return Intent(
                 name=classified,
-                parameters=self._extract_parameters(cleaned),
+                parameters=parameters,
                 raw_input=cleaned,
                 source=source,
                 resolved_by="ai",
@@ -299,22 +304,26 @@ class IntentEngine:
         # An explicitly requested model that does not exist is an error,
         # not a silent fallback to another one.
         model = self._registry.resolve("ai", requested=ai_model)
-        known = self.supported_intents()
+        # The project's own commands are intentions too: without them,
+        # no phrasing that avoids their literal name can ever reach one.
+        labels = list(self.supported_intents()) + [
+            f"RunCommand:{command}" for command in sorted(self._config.commands)
+        ]
+        catalogue = "\n".join(
+            f"- {label} — {_purpose(label)}" for label in labels
+        )
         prompt = (
             "Classify the operator request below into exactly one of these "
             "intentions, or answer NONE if none fits.\n"
-            "Answer with the intention name only, nothing else.\n\n"
-            "Intentions:\n"
-            + "\n".join(f"- {name}" for name in known)
-            + f"\n\nRequest: {text}\n"
+            "Answer with the label only, nothing else.\n\n"
+            "Intentions:\n" + catalogue + f"\n\nRequest: {text}\n"
         )
         try:
             answer = model.complete(prompt)
         except Exception:
             # An unreachable model must never break intent resolution.
             return None
-        candidate = str(answer).strip().splitlines()[0].strip().strip(".`\"' ")
-        return candidate if candidate in known else None
+        return _match_label(answer, labels)
 
     def _extract_parameters(self, text: str) -> dict[str, Any]:
         params: dict[str, Any] = {}
@@ -667,6 +676,57 @@ class IntentEngine:
                 "No AI used: raw context is returned (degraded mode, EF-014)"
             )
         return steps, reasoning
+
+
+#: What each intention is for. A CamelCase name leaves a small model
+#: guessing; one line of purpose costs nothing and removes the guess.
+_PURPOSE = {
+    "DeployProject": "deploy the project to an environment",
+    "RollbackDeployment": "undo the last deployment of an environment",
+    "ProposeChanges": "publish the current work for human review",
+    "FixBug": "have the coding agent fix a bug, then check it",
+    "BackupProject": "back up an environment",
+    "RestoreProject": "restore an environment from its latest backup",
+    "OpenConsole": "get the authorized command to open a remote console",
+    "ShowDatabase": "show database connection information",
+    "ShowStorage": "list stored files",
+    "RestartService": "restart a service through its supervisor",
+    "ShowStatus": "show the state of a deployment or of a named service",
+    "Diagnose": "investigate a problem: gather logs, metrics, traces, status",
+    "ShowLogs": "read recent log lines",
+    "ShowTraces": "read distributed traces, slowest first",
+    "ShowMetrics": "read metrics, statistics, performance figures",
+    "ShowHistory": "list recent commits of the repository",
+}
+
+#: Characters models decorate their answers with. Formatting is not
+#: meaning: `**ShowMetrics**` is the same answer as ShowMetrics.
+#: `:` is absent on purpose: a label may contain one (RunCommand:test),
+#: so it is trimmed at the edges only, never inside.
+_DECORATION = re.compile(r"[*`_~\"'.,;!?()\[\]]|^-\s*")
+
+
+def _purpose(label: str) -> str:
+    if label.startswith("RunCommand:"):
+        return f"run the project's declared {label.split(':', 1)[1]!r} command"
+    return _PURPOSE.get(label, "")
+
+
+def _match_label(answer: Any, labels: list[str]) -> str | None:
+    """The label a model meant, whatever decoration it wrapped it in.
+
+    Only the *form* is forgiven. The set is not: an answer outside the
+    catalogue stays a refusal, so Baygon never invents an action
+    (Article 5).
+    """
+    line = str(answer).strip().splitlines()[0] if str(answer).strip() else ""
+    # A label may itself contain ':' (RunCommand:test), so the colon is
+    # stripped only at the edges, never inside.
+    cleaned = _DECORATION.sub("", line.strip()).strip().strip(":").strip()
+    for label in labels:
+        if cleaned.lower() == label.lower():
+            return label
+    return None
 
 
 def _title_from(description: str) -> str:

@@ -194,6 +194,20 @@ $ baygon resume [--plan ID] [--yes]     # reprendre la dernière exécution éch
 $ baygon run "ouvre une console ssh en production"   # commande de connexion (permission ssh)
 ```
 
+**En mode IA, le modèle voit tout ce que Baygon sait faire** — les seize
+intentions *et* les commandes déclarées par le projet (`RunCommand:test`), avec
+une ligne disant à quoi chacune sert. Sans ça, « je voudrais lancer la suite de
+tests » ne pouvait aboutir à aucune commande, faute d'en contenir le nom
+littéral. Et sa réponse est lue telle que les modèles écrivent :
+`**ShowMetrics**` est la même réponse que `ShowMetrics`. Seule la **forme** est
+pardonnée — un libellé hors catalogue reste un refus, Baygon n'invente jamais
+une action (Article 5).
+
+Les règles déterministes passent toujours en premier : une formulation qu'elles
+reconnaissent ne coûte aucun appel de modèle. La classification par un modèle
+reste variable par nature — c'est précisément pourquoi elle n'arrive qu'en
+dernier recours, et pourquoi `--no-ai` existe.
+
 **Une erreur porte son remède.** Un adaptateur connaît presque toujours la
 sortie au moment où il abandonne : la variable a un nom, l'endpoint une adresse,
 les services déclarés une liste. `ActionableError` transporte cette
