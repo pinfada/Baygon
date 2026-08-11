@@ -643,9 +643,20 @@ class IntentEngine:
                  parameters={"environment": env, "since_hours": since}, risk=RiskLevel.LOW),
             Step(id="2", capability="metrics", action="fetch",
                  parameters={"environment": env}, risk=RiskLevel.LOW),
-            Step(id="3", capability="deployment", action="status",
-                 parameters={"environment": env}, risk=RiskLevel.LOW),
         ]
+        if self._registry.is_available("deployment"):
+            steps.append(
+                Step(id=str(len(steps) + 1), capability="deployment", action="status",
+                     parameters={"environment": env}, risk=RiskLevel.LOW)
+            )
+        else:
+            # A read-only project declares no deployment provider; logs
+            # and metrics still make a diagnosis (ENF-006), like running
+            # without traces or without AI.
+            reasoning.append(
+                "No deployment capability declared: diagnosis runs on logs "
+                "and metrics only"
+            )
         if self._registry.is_available("traces"):
             # Traces say *where* the time goes; logs and metrics only say
             # that something is wrong (EF-007).

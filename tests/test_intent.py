@@ -7,7 +7,7 @@ from baygon.core.errors import UnknownIntentError
 from baygon.core.events import EventBus
 from baygon.core.intent import IntentEngine, RiskLevel
 from baygon.core.registry import CapabilityRegistry
-from tests.helpers import FakeNotification, write_config
+from tests.helpers import FakeDeployment, FakeNotification, write_config
 
 
 class IntentEngineTest(unittest.TestCase):
@@ -75,11 +75,25 @@ class IntentEngineTest(unittest.TestCase):
     def test_why_questions_resolve_to_full_diagnosis(self) -> None:
         # Chapter 4 example: "Pourquoi la production est lente ?" is a
         # diagnosis (logs + metrics + status), not a metrics-only read.
+        self.registry.register(FakeDeployment())
         plan = self.engine.plan("Pourquoi la production est lente ?")
         self.assertEqual(plan.intent.name, "Diagnose")
         self.assertEqual(
             [s.capability for s in plan.steps[:3]], ["logs", "metrics", "deployment"]
         )
+
+    def test_diagnose_degrades_without_deployment(self) -> None:
+        # A read-only project has no deployment provider; the diagnosis
+        # must still run on logs and metrics (ENF-006), like it already
+        # does without traces or without AI.
+        plan = self.engine.plan("Pourquoi la production est lente ?")
+        capabilities = [step.capability for step in plan.steps]
+        self.assertNotIn("deployment", capabilities)
+        self.assertEqual(capabilities[:2], ["logs", "metrics"])
+        self.assertIn("deployment", " ".join(plan.reasoning).lower())
+        # Step ids must stay sequential for depends_on to hold.
+        self.assertEqual([step.id for step in plan.steps],
+                         [str(i + 1) for i in range(len(plan.steps))])
 
     def test_plain_metrics_request_stays_metrics_only(self) -> None:
         plan = self.engine.plan("montre-moi les métriques de production")
