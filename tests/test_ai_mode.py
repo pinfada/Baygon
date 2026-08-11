@@ -139,6 +139,88 @@ class ModelFreshnessTest(unittest.TestCase):
         self.assertEqual(described["model"], "llama3")
 
 
+class CompatibleAdapterHonestyTest(unittest.TestCase):
+    """What the adapter sends, and what it says when the server refuses.
+
+    Both found by running Diagnose on a real project against a local
+    Ollama: a 100-line Rails log blew past the model's context window,
+    and the answer was `HTTP Error 400: Bad Request` — the server had
+    named the problem precisely, but the adapter swallowed the body.
+    """
+
+    def _recording(self, config: dict[str, Any]):
+        from baygon_plugins.openai_compat_ai import OpenAICompatibleAI
+
+        class Recording(OpenAICompatibleAI):
+            sent: list[dict[str, Any]] = []
+
+            def _post_json(self, url, payload, headers):
+                self.sent.append(payload)
+                return {"choices": [{"message": {"content": "ok"}}]}
+
+        adapter = Recording({"base_url": "http://x/v1", "model": "m", **config})
+        return adapter, Recording.sent
+
+    def test_context_is_bounded_and_keeps_its_tail(self) -> None:
+        # A local model has a small window; recent lines live at the end.
+        adapter, sent = self._recording({"max_context_chars": 500})
+        logs = [f"ligne {i}" for i in range(200)] + ["error: la vraie cause"]
+        adapter.complete("Diagnose", context={"logs": logs})
+        content = sent[-1]["messages"][0]["content"]
+        self.assertLess(len(content), 700)
+        self.assertIn("Diagnose", content)          # the prompt survives whole
+        self.assertIn("la vraie cause", content)    # the tail survives
+        self.assertNotIn("ligne 0", content)        # the head is dropped
+        self.assertIn("…", content)                 # the cut is visible
+
+    def test_small_context_is_sent_untouched(self) -> None:
+        adapter, sent = self._recording({})
+        adapter.complete("Diagnose", context={"logs": ["une seule ligne"]})
+        self.assertNotIn("…", sent[-1]["messages"][0]["content"])
+
+    def test_an_empty_answer_is_an_error_not_a_success(self) -> None:
+        # A reasoning model can spend its whole token budget thinking:
+        # Ollama then returns content="" with the thoughts in a side
+        # field. An empty answer reported as success is a silent failure.
+        from baygon_plugins.openai_compat_ai import OpenAICompatibleAI
+
+        class Empty(OpenAICompatibleAI):
+            def _post_json(self, url, payload, headers):
+                return {"choices": [{"message": {
+                    "content": "", "reasoning": "…long private thoughts…",
+                }}]}
+
+        adapter = Empty({"base_url": "http://x/v1", "model": "m"})
+        with self.assertRaises(RuntimeError) as raised:
+            adapter.complete("Diagnose")
+        self.assertIn("empty answer", str(raised.exception))
+        self.assertIn("max_tokens", str(raised.exception))
+
+    def test_server_refusal_is_reported_with_its_reason(self) -> None:
+        import io
+        import urllib.error
+
+        from baygon_plugins.openai_compat_ai import OpenAICompatibleAI
+
+        body = json.dumps({"error": {"message": json.dumps({"error": {
+            "code": 400,
+            "message": "request (12008 tokens) exceeds the available context size (4096 tokens)",
+        }})}}).encode()
+
+        class Refusing(OpenAICompatibleAI):
+            def _post_json(self, url, payload, headers):
+                raise urllib.error.HTTPError(
+                    url, 400, "Bad Request", hdrs=None, fp=io.BytesIO(body)
+                )
+
+        adapter = Refusing({"base_url": "http://x/v1", "model": "m"})
+        with self.assertRaises(RuntimeError) as raised:
+            adapter.complete("Diagnose")
+        message = str(raised.exception)
+        self.assertIn("400", message)
+        self.assertIn("exceeds the available context size", message)
+
+
 class SessionApiTest(unittest.TestCase):
     def setUp(self) -> None:
         ClassifierAI.prompts = []
