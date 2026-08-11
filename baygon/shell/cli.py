@@ -143,7 +143,24 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _tolerate_narrow_encodings() -> None:
+    """Never let the console encoding take a command down (EF-020).
+
+    Windows consoles often default to a legacy code page (cp1252) that
+    cannot encode the ✓/✗/… glyphs the reports use. The answer matters
+    more than the glyph: degrade the character, never the command.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(errors="replace")
+            except Exception:
+                pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _tolerate_narrow_encodings()
     args = _build_parser().parse_args(argv)
     try:
         kernel = _select_kernel(args)

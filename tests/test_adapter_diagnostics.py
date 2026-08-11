@@ -14,6 +14,7 @@ fixtures, both of which hid the very information needed to act:
 
 import socket
 import subprocess
+import sys
 import time
 import unittest
 from typing import Any
@@ -63,7 +64,8 @@ class CommandAdaptersReportOutputTest(unittest.TestCase):
     """The three adapters that run a subprocess, on a real failure."""
 
     #: Writes on stdout only, like the tools projects actually declare.
-    FAILING = "python3 -c \"print('erreur de typage: TS2551'); raise SystemExit(2)\""
+    #: Built from sys.executable: `python3` is not guaranteed on PATH.
+    FAILING = f"\"{sys.executable}\" -c \"print('erreur de typage: TS2551'); raise SystemExit(2)\""
 
     def test_workspace_reports_what_the_command_printed(self) -> None:
         adapter = LocalShellWorkspace({"cwd": "."})
@@ -80,7 +82,7 @@ class CommandAdaptersReportOutputTest(unittest.TestCase):
 
     def test_coding_agent_reports_what_the_command_printed(self) -> None:
         adapter = CodingAgent({
-            "command": ["python3", "-c", "print('agent: contexte trop long'); raise SystemExit(3)"],
+            "command": [sys.executable, "-c", "print('agent: contexte trop long'); raise SystemExit(3)"],
             "cwd": ".",
         })
         with self.assertRaises(RuntimeError) as raised:
