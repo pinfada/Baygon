@@ -44,6 +44,52 @@ def _plan_with_feedback(plan: Plan, feedback: str) -> Plan:
     return replace(plan, steps=steps)
 
 
+def _briefed(plan: Plan, description: str, origin: str) -> Plan:
+    """Copy of the plan with the description injected into its developer
+    steps, and the origin of that description told first (Article 8)."""
+    steps = [
+        replace(step, parameters={**step.parameters, "description": description})
+        if step.capability == "developer" else step
+        for step in plan.steps
+    ]
+    return replace(plan, steps=steps, reasoning=[origin, *plan.reasoning])
+
+
+def _compact(output: Any) -> str:
+    """One journal output, flattened and bounded for a briefing line."""
+    text = " ".join(str(output).split())
+    return text[:500] + (" …" if len(text) > 500 else "")
+
+
+def _carry_descriptions(plan: Plan, recorded: dict[str, Any]) -> Plan:
+    """Rebuilt developer steps take back the description that was run.
+
+    A briefed description ("corrige le dernier incident/diagnostic")
+    belongs to the plan the user approved, not to the words that
+    produced it: rebuilding from the words alone would hand the agent
+    the phrase — or a description drawn from a journal that has moved
+    on since the approval. For an ordinary fix the recorded and rebuilt
+    descriptions are identical, so this changes nothing.
+    """
+    by_id = {step["id"]: step for step in recorded["steps"]}
+    steps = []
+    for step in plan.steps:
+        old = by_id.get(step.id)
+        if (
+            step.capability == "developer"
+            and old is not None
+            and (old["capability"], old["action"]) == (step.capability, step.action)
+            and "description" in old["parameters"]
+        ):
+            step = replace(
+                step,
+                parameters={**step.parameters,
+                            "description": old["parameters"]["description"]},
+            )
+        steps.append(step)
+    return replace(plan, steps=steps)
+
+
 def _reusable(plan: Plan, recorded: list[dict[str, Any]]) -> dict[str, Any]:
     """Recorded outputs that still belong to a step of the rebuilt plan.
 
@@ -120,8 +166,13 @@ class Kernel:
         ai_model: str | None = None,
     ) -> Plan:
         plan = self.intent_engine.plan(text, source=source, ai=ai, ai_model=ai_model)
-        if plan.intent.parameters.get("from_last_incident"):
-            plan = self._describe_last_incident(plan)
+        # Only a fix has a developer step to brief: on any other intention
+        # the phrasing is just context ("pourquoi ce dernier incident ?").
+        if plan.intent.name == "FixBug":
+            if plan.intent.parameters.get("from_last_incident"):
+                plan = self._describe_last_incident(plan)
+            elif plan.intent.parameters.get("from_last_diagnosis"):
+                plan = self._describe_last_diagnosis(plan)
         self.bus.publish(
             events.PLAN_CREATED, plan=plan.id, intent=plan.intent.name, risk=plan.risk.value
         )
@@ -154,18 +205,55 @@ class Kernel:
             f"- cause : {failure.get('cause')}\n"
             f"Corrige la cause dans le code du projet, pas le symptôme."
         )
-        steps = [
-            replace(s, parameters={**s.parameters, "description": description})
-            if s.capability == "developer" else s
-            for s in plan.steps
-        ]
-        reasoning = list(plan.reasoning)
-        reasoning.insert(
-            0,
+        return _briefed(
+            plan,
+            description,
             f"Description reprise du dernier incident journalisé "
             f"({entry['intent']}, étape {failure.get('step')})",
         )
-        return replace(plan, steps=steps, reasoning=reasoning)
+
+    def _describe_last_diagnosis(self, plan: Plan) -> Plan:
+        """Replace the description with what the last diagnosis found.
+
+        The other side of the incident handoff: a Diagnose that
+        *succeeded* named a probable cause, and the operator should not
+        have to read it on one screen and retype it on another. The
+        model's analysis is preferred; a diagnosis made without AI still
+        hands over its raw evidence (EF-014: degraded, never broken).
+        """
+        entry = self._last_diagnosis()
+        if entry is None:
+            raise BaygonError(
+                "no diagnosis recorded: there is nothing to hand over. "
+                "Run a diagnosis first (e.g. « pourquoi la production est lente ? »)"
+            )
+        recorded = entry["result"]["steps"]
+        # A model can succeed and still say nothing (a tool-use-only
+        # response): an empty answer must not shadow the gathered evidence.
+        analysis = next(
+            (s["output"] for s in recorded
+             if s["capability"] == "ai" and s["success"] and s["output"]),
+            None,
+        )
+        if analysis is None:
+            evidence = "\n".join(
+                f"- {s['capability']}.{s['action']} : {_compact(s['output'])}"
+                for s in recorded if s["success"]
+            )
+            body = f"Constats bruts du diagnostic :\n{evidence}"
+        else:
+            body = f"Diagnostic établi par le modèle :\n{analysis}"
+        description = (
+            f"Corrige la cause du problème décrit par ce diagnostic, obtenu en "
+            f"répondant à « {entry['input']} » :\n{body}\n"
+            f"Corrige la cause dans le code du projet, pas le symptôme."
+        )
+        return _briefed(
+            plan,
+            description,
+            "Description reprise du dernier diagnostic journalisé "
+            + ("(analyse du modèle)" if analysis else "(constats bruts, sans IA)"),
+        )
 
     def run(
         self,
@@ -278,9 +366,20 @@ class Kernel:
             ai=bool(session.get("ai", True)),
             ai_model=session.get("ai_model"),
         )
+        plan = _carry_descriptions(plan, recorded)
         return self.execute(
             plan, approved=approved, completed=_reusable(plan, entry["result"]["steps"])
         )
+
+    def _last_diagnosis(self) -> dict[str, Any] | None:
+        for entry in reversed(self.audit.entries(limit=1000)):
+            if (
+                entry.get("intent") == "Diagnose"
+                and entry.get("status") == "success"
+                and entry.get("result")
+            ):
+                return entry
+        return None
 
     def _last_failure(self, plan_id: str | None) -> dict[str, Any] | None:
         for entry in reversed(self.audit.entries(limit=1000)):

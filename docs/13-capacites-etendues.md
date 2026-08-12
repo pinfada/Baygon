@@ -110,6 +110,46 @@ logique spécifique à une capacité :
 
 Ces mécanismes sont réutilisables par toute intention future.
 
+### Entrer dans la boucle depuis le journal
+
+Deux tournures reconnues par l'Intent Engine remplissent la description
+du `developer.fix` depuis le journal d'audit — l'Intent Engine lit le
+langage, le noyau, propriétaire du journal, lit l'état :
+
+- **« corrige le dernier incident »** — reprend le dernier *échec
+  d'exécution* journalisé : l'étape, la capacité, la cause.
+- **« corrige le dernier diagnostic »** — reprend ce que le dernier
+  `Diagnose` *réussi* a trouvé : l'analyse du modèle, ou les constats
+  bruts (logs, métriques) quand le diagnostic a tourné sans IA — dégradé,
+  jamais cassé (EF-014).
+
+L'opérateur n'a plus à lire un résultat sur un écran et à le retaper
+sur un autre : `pourquoi le paiement plante ?` puis `corrige le dernier
+diagnostic` suffisent. Les garanties de la boucle (QA indépendante,
+rondes bornées, validation) s'appliquent inchangées.
+
+### Briefing de l'agent
+
+Un agent déposé dans un dépôt n'en connaît pas les conventions.
+Certains lisent un fichier de contexte d'eux-mêmes (Claude Code et
+CLAUDE.md) ; la plupart non. L'option `briefing_files` égalise :
+
+```yaml
+providers:
+  dev:
+    type: developer
+    plugin: baygon_plugins.coding_agent:CodingAgent
+    options:
+      command: ["claude", "-p", "{prompt}"]
+      briefing_files: [CLAUDE.md]      # joints au prompt, quel que soit l'agent
+      briefing_max_chars: 4000         # borne par fichier (défaut)
+```
+
+Le contenu des fichiers déclarés voyage dans le prompt — la neutralité
+de fournisseur (ENF-019) appliquée au contexte, pas seulement à la
+commande. Un fichier déclaré mais absent est une erreur de
+configuration, jamais un oubli silencieux.
+
 ---
 
 ## Règle

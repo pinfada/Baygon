@@ -122,8 +122,54 @@ class CodingAgent(DeveloperCapability):
         # `fix()` says so and names the command.
         return self._extension_decides_what_is_executable() and resolved.is_file()
 
+    def _briefing(self) -> str:
+        """Project context the agent should read before touching code.
+
+        Some agents read a context file on their own (Claude Code and
+        CLAUDE.md); most do not. The declared files travel inside the
+        prompt so every agent starts equally informed — provider
+        neutrality (ENF-019) applied to context, not just to the
+        command. The prompt travels on a command line, so each file is
+        bounded; a declared file that is missing is a configuration
+        error, not something to silently skip.
+        """
+        limit = int(self.config.get("briefing_max_chars", 4000))
+        declared_files = self.config.get("briefing_files") or []
+        # A bare string is iterable too — character by character, which
+        # would hunt for a file named "C". Refuse the shape, not its letters.
+        if not isinstance(declared_files, (list, tuple)):
+            raise ActionableError(
+                f"options.briefing_files must be a list of files, "
+                f"not {type(declared_files).__name__}",
+                ["write it as a YAML list, e.g. briefing_files: [CLAUDE.md]"],
+            )
+        sections = []
+        for declared in declared_files:
+            path = self.resolve_path(declared)
+            if not path.is_file():
+                raise ActionableError(
+                    f"briefing file {str(declared)!r} not found at {path}",
+                    ["create the file, or remove it from options.briefing_files"],
+                )
+            try:
+                # utf-8-sig: a Windows editor's BOM must not leak into the prompt.
+                content = path.read_text(encoding="utf-8-sig")
+            except UnicodeDecodeError as exc:
+                raise ActionableError(
+                    f"briefing file {str(declared)!r} is not UTF-8 "
+                    f"({exc.reason} at byte {exc.start})",
+                    ["re-save the file as UTF-8"],
+                ) from exc
+            if len(content) > limit:
+                content = content[:limit] + "\n[… truncated by Baygon]"
+            sections.append(f"## Project context — {declared}\n{content}")
+        return "\n\n".join(sections)
+
     def fix(self, description: str, feedback: str | None = None, **params: Any) -> dict[str, Any]:
         prompt = description
+        briefing = self._briefing()
+        if briefing:
+            prompt += "\n\n" + briefing
         if feedback:
             prompt += (
                 "\n\nA previous attempt did not pass the test suite. QA report:\n"

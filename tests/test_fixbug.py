@@ -175,6 +175,136 @@ class CodingAgentAdapterTest(unittest.TestCase):
         self.assertIn("test_refund", adapter.commands[0][1])
 
 
+class AgentBriefingTest(unittest.TestCase):
+    """The agent deserves better than a bare prompt.
+
+    A coding agent dropped into a repository knows nothing of its
+    conventions. Some read a context file on their own (Claude Code and
+    CLAUDE.md); most do not. `briefing_files` levels the field: the
+    declared files travel inside the prompt, whoever the agent is —
+    provider neutrality (ENF-019) applied to context, not just to the
+    command.
+    """
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.project = Path(tmp.name)
+
+    def _agent(self, config):
+        from baygon_plugins.coding_agent import CodingAgent
+
+        class FakeAgent(CodingAgent):
+            def __init__(self, options=None):
+                super().__init__(options)
+                self.commands = []
+
+            def _run(self, args):
+                self.commands.append(args)
+                return "done"
+
+        agent = FakeAgent(config)
+        agent.project_dir = self.project
+        return agent
+
+    def test_declared_briefing_files_travel_inside_the_prompt(self) -> None:
+        (self.project / "CLAUDE.md").write_text(
+            "Toujours utiliser des requêtes paramétrées.", encoding="utf-8"
+        )
+        agent = self._agent(
+            {"command": ["agent", "{prompt}"], "briefing_files": ["CLAUDE.md"]}
+        )
+        agent.fix("corrige le bug de paiement")
+        prompt = agent.commands[0][1]
+        self.assertIn("corrige le bug de paiement", prompt)
+        self.assertIn("requêtes paramétrées", prompt)
+        self.assertIn("CLAUDE.md", prompt, "the source of the context is named")
+
+    def test_the_task_comes_first_and_the_context_after(self) -> None:
+        (self.project / "CLAUDE.md").write_text("contexte projet", encoding="utf-8")
+        agent = self._agent(
+            {"command": ["agent", "{prompt}"], "briefing_files": ["CLAUDE.md"]}
+        )
+        agent.fix("corrige le bug")
+        prompt = agent.commands[0][1]
+        self.assertLess(prompt.index("corrige le bug"), prompt.index("contexte projet"))
+
+    def test_a_missing_declared_file_is_an_error_not_a_shrug(self) -> None:
+        from baygon.capabilities import ActionableError
+
+        agent = self._agent(
+            {"command": ["agent", "{prompt}"], "briefing_files": ["CLAUDE.md"]}
+        )
+        with self.assertRaises(ActionableError) as raised:
+            agent.fix("corrige le bug")
+        self.assertIn("CLAUDE.md", str(raised.exception))
+
+    def test_an_oversized_file_is_cut_and_says_so(self) -> None:
+        """The prompt travels on a command line; it must stay bounded."""
+        (self.project / "CLAUDE.md").write_text("x" * 10_000, encoding="utf-8")
+        agent = self._agent(
+            {"command": ["agent", "{prompt}"], "briefing_files": ["CLAUDE.md"],
+             "briefing_max_chars": 100}
+        )
+        agent.fix("corrige le bug")
+        prompt = agent.commands[0][1]
+        self.assertLess(len(prompt), 1_000)
+        self.assertIn("truncated", prompt)
+
+    def test_feedback_still_lands_after_the_briefing(self) -> None:
+        (self.project / "CLAUDE.md").write_text("contexte", encoding="utf-8")
+        agent = self._agent(
+            {"command": ["agent", "{prompt}"], "briefing_files": ["CLAUDE.md"]}
+        )
+        agent.fix("corrige le bug", feedback="2 tests failed: test_refund")
+        self.assertIn("test_refund", agent.commands[0][1])
+
+    def test_without_briefing_files_the_prompt_is_unchanged(self) -> None:
+        agent = self._agent({"command": ["agent", "{prompt}"]})
+        agent.fix("corrige le bug")
+        self.assertEqual(agent.commands[0][1], "corrige le bug")
+
+    def test_a_briefing_key_left_empty_means_no_briefing(self) -> None:
+        """`briefing_files:` with no value is YAML for None, not a typo
+        worth crashing over."""
+        agent = self._agent({"command": ["agent", "{prompt}"], "briefing_files": None})
+        agent.fix("corrige le bug")
+        self.assertEqual(agent.commands[0][1], "corrige le bug")
+
+    def test_a_bare_string_is_refused_with_the_expected_shape(self) -> None:
+        """`briefing_files: CLAUDE.md` without brackets must not be
+        iterated character by character ("file 'C' not found")."""
+        from baygon.capabilities import ActionableError
+
+        agent = self._agent(
+            {"command": ["agent", "{prompt}"], "briefing_files": "CLAUDE.md"}
+        )
+        with self.assertRaises(ActionableError) as raised:
+            agent.fix("corrige le bug")
+        self.assertIn("list", str(raised.exception))
+
+    def test_a_file_that_is_not_utf8_is_an_actionable_error(self) -> None:
+        """A CLAUDE.md saved in cp1252 — a realistic Windows accident —
+        deserves a remedy, not a raw UnicodeDecodeError."""
+        from baygon.capabilities import ActionableError
+
+        (self.project / "CLAUDE.md").write_bytes("règles".encode("cp1252"))
+        agent = self._agent(
+            {"command": ["agent", "{prompt}"], "briefing_files": ["CLAUDE.md"]}
+        )
+        with self.assertRaises(ActionableError) as raised:
+            agent.fix("corrige le bug")
+        self.assertIn("UTF-8", str(raised.exception))
+
+    def test_a_windows_bom_does_not_leak_into_the_prompt(self) -> None:
+        (self.project / "CLAUDE.md").write_text("contexte", encoding="utf-8-sig")
+        agent = self._agent(
+            {"command": ["agent", "{prompt}"], "briefing_files": ["CLAUDE.md"]}
+        )
+        agent.fix("corrige le bug")
+        self.assertNotIn("﻿", agent.commands[0][1])
+
+
 class AgentAvailabilityTest(unittest.TestCase):
     """What counts as a usable program depends on the operating system.
 

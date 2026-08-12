@@ -193,6 +193,14 @@ _LAST_INCIDENT = re.compile(
     re.IGNORECASE,
 )
 
+#: "corrige le dernier diagnostic" — same split of responsibilities,
+#: other side of the journal: what a successful Diagnose found.
+_LAST_DIAGNOSIS = re.compile(
+    r"\b(derni[eè]re?)\s+(diagnostic|analyse)\b"
+    r"|\blast\s+(diagnosis|analysis)\b",
+    re.IGNORECASE,
+)
+
 #: Service named after a restart verb: "redémarre le worker" -> worker.
 #: Words that stand between the question and the name it is about:
 #: "dans quel état est le worker" -> worker.
@@ -343,6 +351,8 @@ class IntentEngine:
             params["environment"] = "development"
         if _LAST_INCIDENT.search(text):
             params["from_last_incident"] = True
+        if _LAST_DIAGNOSIS.search(text):
+            params["from_last_diagnosis"] = True
         hours = _HOURS.search(text)
         if hours:
             params["since_hours"] = int(hours.group(1))

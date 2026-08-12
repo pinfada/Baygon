@@ -88,6 +88,8 @@ $ baygon run "liste les fichiers du stockage"
 $ baygon run "sauvegarde la production"
 $ baygon run "restaure la production" --yes  # CRITICAL : --yes obligatoire
 $ baygon run "Résous le bug de paiement" --yes   # boucle Dev → QA → Revue (§6)
+$ baygon run "corrige le dernier incident"       # reprend l'échec journalisé
+$ baygon run "corrige le dernier diagnostic"     # reprend ce que le Diagnose a trouvé
 $ baygon run "propose les changements en revue" --yes
 $ baygon resume                          # reprendre après une panne fournisseur
 $ baygon history                         # tout est tracé

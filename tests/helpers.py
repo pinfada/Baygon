@@ -234,6 +234,17 @@ class GatedWorkspace(WorkspaceCapability):
         return {"command": command, "exit_code": 0}
 
 
+class DiagnosingAI(AICapability):
+    """AI double that answers like a model reading the gathered context."""
+
+    identifier = "diagnosing-ai"
+    analysis = ("Le worker de paiement plante sur une NullPointerException "
+                "dans payment.py ligne 42 à chaque webhook Stripe.")
+
+    def complete(self, prompt: str, context: dict[str, Any] | None = None, **params: Any) -> str:
+        return DiagnosingAI.analysis
+
+
 class ClassifierAI(AICapability):
     """AI double for intent-classification tests: scripted answer."""
 

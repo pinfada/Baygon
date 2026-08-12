@@ -117,6 +117,20 @@ class IncidentHandoffTest(unittest.TestCase):
         self.assertEqual(helpers.FIXBUG_STATE["attempts"], 1)
         self.assertIn("provider exploded", helpers.FIXBUG_STATE["descriptions"][-1])
 
+    def test_resume_replays_the_briefed_description_not_the_phrase(self) -> None:
+        """Same fidelity rule as for a diagnosis handoff: rebuilding the
+        plan from the words would lose the incident the user approved —
+        the journal's latest failure is now the fix attempt itself."""
+        cause = self._cause_an_incident()
+        helpers.FIXBUG_STATE["fixed_after"] = 99  # QA never passes
+        result = self.kernel.run("corrige le dernier incident")
+        self.assertFalse(result.success)
+        helpers.FIXBUG_STATE["fixed_after"] = helpers.FIXBUG_STATE["attempts"] + 1
+        resumed = self.kernel.resume()
+        self.assertTrue(resumed.success)
+        self.assertIn(cause, helpers.FIXBUG_STATE["descriptions"][-1],
+                      "the agent must be re-briefed with the original incident")
+
     def test_without_an_incident_it_says_so_rather_than_inventing_one(self) -> None:
         with self.assertRaises(BaygonError) as raised:
             self.kernel.plan("corrige le dernier incident")
