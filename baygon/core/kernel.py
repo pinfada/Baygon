@@ -61,6 +61,12 @@ def _compact(output: Any) -> str:
     return text[:500] + (" …" if len(text) > 500 else "")
 
 
+def _bounded(text: str, limit: int = 4000) -> str:
+    """Prose kept whole but bounded — the description it joins ends up
+    on a command line, which has a ceiling of its own."""
+    return text if len(text) <= limit else text[:limit] + " …"
+
+
 def _carry_descriptions(plan: Plan, recorded: dict[str, Any]) -> Plan:
     """Rebuilt developer steps take back the description that was run.
 
@@ -242,7 +248,7 @@ class Kernel:
             )
             body = f"Constats bruts du diagnostic :\n{evidence}"
         else:
-            body = f"Diagnostic établi par le modèle :\n{analysis}"
+            body = f"Diagnostic établi par le modèle :\n{_bounded(str(analysis))}"
         description = (
             f"Corrige la cause du problème décrit par ce diagnostic, obtenu en "
             f"répondant à « {entry['input']} » :\n{body}\n"

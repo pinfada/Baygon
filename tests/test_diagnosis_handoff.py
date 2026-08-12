@@ -137,6 +137,19 @@ class DiagnosisHandoffTest(unittest.TestCase):
         description = plan.steps[0].parameters["description"]
         self.assertIn("log line", description, "the gathered evidence")
 
+    def test_a_verbose_analysis_is_bounded_like_the_evidence_is(self) -> None:
+        """The description ends up on a command line: the evidence
+        fallback is capped, the model's prose must be too."""
+        self.addCleanup(
+            setattr, helpers.DiagnosingAI, "analysis", helpers.DiagnosingAI.analysis
+        )
+        helpers.DiagnosingAI.analysis = "blabla " * 10_000
+        self._diagnose()
+        plan = self.kernel.plan("corrige le dernier diagnostic")
+        description = plan.steps[0].parameters["description"]
+        self.assertLess(len(description), 5_000)
+        self.assertIn("…", description, "the cut is announced, not silent")
+
     def test_an_empty_ai_answer_counts_as_no_analysis_at_all(self) -> None:
         """A model can succeed and still say nothing (a tool-use-only
         response). An empty analysis must not shadow the real evidence

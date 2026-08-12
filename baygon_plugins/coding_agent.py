@@ -152,8 +152,12 @@ class CodingAgent(DeveloperCapability):
                     ["create the file, or remove it from options.briefing_files"],
                 )
             try:
-                # utf-8-sig: a Windows editor's BOM must not leak into the prompt.
-                content = path.read_text(encoding="utf-8-sig")
+                # utf-8-sig: a Windows editor's BOM must not leak into the
+                # prompt. Read one char past the bound, never the whole
+                # file: a briefing_files pointed at a log must not be
+                # buffered entirely just to be thrown away.
+                with path.open(encoding="utf-8-sig") as handle:
+                    content = handle.read(limit + 1)
             except UnicodeDecodeError as exc:
                 raise ActionableError(
                     f"briefing file {str(declared)!r} is not UTF-8 "
