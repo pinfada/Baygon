@@ -245,6 +245,26 @@ class DiagnosingAI(AICapability):
         return DiagnosingAI.analysis
 
 
+class SynthesizingAI(AICapability):
+    """Orchestrator double: writes the report a meta-agent would write."""
+
+    identifier = "synthesizing-ai"
+    prompts: list[str] = []
+
+    def complete(self, prompt: str, context: dict[str, Any] | None = None, **params: Any) -> str:
+        SynthesizingAI.prompts.append(prompt)
+        return "SYNTHÈSE DU MODÈLE : tout est sous contrôle."
+
+
+class ExplodingAI(AICapability):
+    """AI double whose every call fails — the model is unreachable."""
+
+    identifier = "exploding-ai"
+
+    def complete(self, prompt: str, context: dict[str, Any] | None = None, **params: Any) -> str:
+        raise RuntimeError("model unreachable")
+
+
 class ClassifierAI(AICapability):
     """AI double for intent-classification tests: scripted answer."""
 

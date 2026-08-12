@@ -140,6 +140,30 @@ def _build_parser() -> argparse.ArgumentParser:
     history = sub.add_parser("history", help="show executed intentions")
     history.add_argument("--limit", type=int, default=20)
 
+    workspace = sub.add_parser(
+        "workspace", help="pilot a fleet of projects from one file"
+    )
+    workspace.add_argument(
+        "-w", "--workspace-file", default="baygon-workspace.yaml",
+        dest="workspace_file",
+        help="path to baygon-workspace.yaml (default: ./baygon-workspace.yaml)",
+    )
+    wsub = workspace.add_subparsers(dest="workspace_command", required=True)
+    wsub.add_parser("projects", help="list the workspace's projects")
+    wsub.add_parser("validate", help="validate baygon-workspace.yaml")
+    wrun = wsub.add_parser(
+        "run", help="ask every project, get one executive report"
+    )
+    wrun.add_argument("intent", help="intention in natural language")
+    wrun.add_argument(
+        "--yes", action="store_true",
+        help="approve sensitive actions on every project for this run",
+    )
+    wrun.add_argument(
+        "--json", action="store_true",
+        help="machine-readable facts instead of the briefing",
+    )
+
     return parser
 
 
@@ -159,9 +183,51 @@ def _tolerate_narrow_encodings() -> None:
                 pass
 
 
+def _workspace_main(args: argparse.Namespace) -> int:
+    """The fleet commands: quiet pipeline, executive report.
+
+    Progress is one line per event on the error stream — never the
+    step-by-step feed of a single project. Standard output carries the
+    briefing (or the raw facts with --json), nothing else.
+    """
+    import json as _json
+
+    from baygon.core.workspace import Workspace
+
+    workspace = Workspace.start(args.workspace_file)
+    if args.workspace_command == "projects":
+        for name in workspace.projects():
+            print(name)
+        return 0
+    if args.workspace_command == "validate":
+        config = workspace.config
+        print(f"ok: {config.path} is valid "
+              f"(workspace {config.name!r}, {len(config.projects)} projet(s))")
+        for name, error in workspace.failures.items():
+            print(f"warning: {name!r} unavailable: {error}", file=sys.stderr)
+        return 0
+
+    def progress(message: str) -> None:
+        if sys.stderr.isatty():
+            print(message, file=sys.stderr)
+
+    report = workspace.run(args.intent, approved=args.yes, on_progress=progress)
+    if args.json:
+        print(_json.dumps(report.facts(), indent=2, ensure_ascii=False))
+    else:
+        print(workspace.narrate(report))
+    return 1 if report.global_status == "attention" else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     _tolerate_narrow_encodings()
     args = _build_parser().parse_args(argv)
+    if args.command == "workspace":
+        try:
+            return _workspace_main(args)
+        except BaygonError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
     try:
         kernel = _select_kernel(args)
         if kernel is None:  # the `projects` listing already printed

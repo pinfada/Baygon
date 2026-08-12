@@ -93,6 +93,7 @@ $ baygon run "corrige le dernier diagnostic"     # reprend ce que le Diagnose a 
 $ baygon run "propose les changements en revue" --yes
 $ baygon resume                          # reprendre après une panne fournisseur
 $ baygon history                         # tout est tracé
+$ baygon workspace run "est-ce que nous avons des incidents ?"  # tout le parc (§ chap. 14)
 $ baygon context                         # ce que Baygon sait du projet
 $ baygon capabilities                    # capacités et implémentations actives
 $ baygon projects                        # projets gérés (voir §8)
