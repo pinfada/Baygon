@@ -176,6 +176,53 @@ class WebUiTest(unittest.TestCase):
         self.assertEqual(called - defined, set())
 
 
+class WebUxTest(WebUiTest):
+    """The page must answer, not dump.
+
+    The run that matters ends with the model's analysis buried in
+    escaped JSON three levels deep — unreadable on the phone this page
+    was built for. The answer comes first, in words; the raw JSON stays
+    one fold away, never gone (trust needs the source at hand).
+    """
+
+    def test_enter_submits_the_intention(self) -> None:
+        """On a phone keyboard, Enter is the button."""
+        _, _, body = self._get("/")
+        self.assertIn("<form", body)
+        self.assertIn("onsubmit=", body)
+
+    def test_the_raw_json_hides_behind_a_fold_but_never_disappears(self) -> None:
+        _, _, body = self._get("/")
+        self.assertIn("<details", body)
+        self.assertIn('id="raw"', body)
+
+    def test_each_kind_of_answer_has_its_own_renderer(self) -> None:
+        """A run is read for its analysis, a history for its lines, a
+        doctor for what works: one JSON dump cannot serve them all."""
+        _, _, body = self._get("/")
+        script = script_of(body)
+        for renderer in ("renderRun", "renderPlan", "renderHistory", "renderDoctor"):
+            self.assertIn(f"function {renderer}", script)
+
+    def test_data_reaches_the_page_as_text_never_as_markup(self) -> None:
+        """Logs and model output are external data: a `<script>` in a
+        log line must land as characters, not as a script."""
+        _, _, body = self._get("/")
+        script = script_of(body)
+        self.assertNotIn(".innerHTML = ", script,
+                         "build nodes with textContent, not innerHTML")
+
+    def test_the_token_survives_a_reload_within_the_session(self) -> None:
+        """Retyping a long token at every visit is the one friction a
+        phone will not forgive; a token that outlives the browser is
+        the one risk this page must not take. sessionStorage is the
+        middle: it survives a reload, dies with the tab."""
+        _, _, body = self._get("/")
+        script = script_of(body)
+        self.assertIn("sessionStorage", script)
+        self.assertNotIn("localStorage", script)
+
+
 def script_of(html: str) -> str:
     """The page's inline script, or "" when there is none."""
     match = re.search(r"<script[^>]*>(.*?)</script>", html, re.DOTALL)
