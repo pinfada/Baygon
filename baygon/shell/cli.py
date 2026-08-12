@@ -11,10 +11,63 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from typing import TextIO
 
 from baygon import __version__
+from baygon.core import events
 from baygon.core.errors import BaygonError, ValidationRequiredError
 from baygon.core.kernel import Kernel
+
+
+def attach_progress(kernel: Kernel, stream: TextIO) -> None:
+    """Report execution progress on `stream` as the plan runs (EF-020).
+
+    A command that calls an AI model can take seconds; going silent
+    until the answer is ready looks like a freeze. Progress is written
+    on the error stream so standard output keeps carrying nothing but
+    the machine-readable result.
+
+    The reporter only listens: a stream that cannot be written to
+    (closed pipe, full disk) must never take the execution down with it.
+    """
+    state = {"total": 0, "done": 0}
+
+    def write(line: str) -> None:
+        try:
+            stream.write(line)
+            stream.flush()
+        except Exception:
+            # Progress is a courtesy, never a dependency.
+            return
+
+    def started(event: events.Event) -> None:
+        state["total"] = int(event.payload.get("steps", 0))
+        state["done"] = 0
+
+    def step_started(event: events.Event) -> None:
+        position = f"{state['done'] + 1}/{state['total']}" if state["total"] else "…"
+        write(f"  [{position}] {_label(event)} …\n")
+
+    def step_finished(event: events.Event) -> None:
+        state["done"] += 1
+        payload = event.payload
+        if payload.get("reused"):
+            outcome = "reused"
+        else:
+            outcome = "ok" if payload.get("success") else "failed"
+        duration = payload.get("duration_ms")
+        timing = f" ({duration:.0f} ms)" if isinstance(duration, (int, float)) else ""
+        position = f"{state['done']}/{state['total']}" if state["total"] else "…"
+        write(f"  [{position}] {_label(event)} {outcome}{timing}\n")
+
+    kernel.bus.subscribe(events.EXECUTION_STARTED, started)
+    kernel.bus.subscribe(events.STEP_STARTED, step_started)
+    kernel.bus.subscribe(events.STEP_FINISHED, step_finished)
+
+
+def _label(event: events.Event) -> str:
+    payload = event.payload
+    return f"{payload.get('capability', '?')}.{payload.get('action', '?')}"
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -50,6 +103,10 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("validate", help="validate baygon.yaml")
     sub.add_parser("capabilities", help="list available capabilities and implementations")
     sub.add_parser("context", help="show the project context built by the Context Engine")
+    doctor = sub.add_parser(
+        "doctor", help="what can be done on this project, and what is missing"
+    )
+    doctor.add_argument("--json", action="store_true", help="machine-readable output")
 
     serve = sub.add_parser("serve", help="expose the Shell as a REST API")
     serve.add_argument("--host", default="127.0.0.1")
@@ -83,11 +140,94 @@ def _build_parser() -> argparse.ArgumentParser:
     history = sub.add_parser("history", help="show executed intentions")
     history.add_argument("--limit", type=int, default=20)
 
+    workspace = sub.add_parser(
+        "workspace", help="pilot a fleet of projects from one file"
+    )
+    workspace.add_argument(
+        "-w", "--workspace-file", default="baygon-workspace.yaml",
+        dest="workspace_file",
+        help="path to baygon-workspace.yaml (default: ./baygon-workspace.yaml)",
+    )
+    wsub = workspace.add_subparsers(dest="workspace_command", required=True)
+    wsub.add_parser("projects", help="list the workspace's projects")
+    wsub.add_parser("validate", help="validate baygon-workspace.yaml")
+    wrun = wsub.add_parser(
+        "run", help="ask every project, get one executive report"
+    )
+    wrun.add_argument("intent", help="intention in natural language")
+    wrun.add_argument(
+        "--yes", action="store_true",
+        help="approve sensitive actions on every project for this run",
+    )
+    wrun.add_argument(
+        "--json", action="store_true",
+        help="machine-readable facts instead of the briefing",
+    )
+
     return parser
 
 
+def _tolerate_narrow_encodings() -> None:
+    """Never let the console encoding take a command down (EF-020).
+
+    Windows consoles often default to a legacy code page (cp1252) that
+    cannot encode the ✓/✗/… glyphs the reports use. The answer matters
+    more than the glyph: degrade the character, never the command.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(errors="replace")
+            except Exception:
+                pass
+
+
+def _workspace_main(args: argparse.Namespace) -> int:
+    """The fleet commands: quiet pipeline, executive report.
+
+    Progress is one line per event on the error stream — never the
+    step-by-step feed of a single project. Standard output carries the
+    briefing (or the raw facts with --json), nothing else.
+    """
+    import json as _json
+
+    from baygon.core.workspace import Workspace
+
+    workspace = Workspace.start(args.workspace_file)
+    if args.workspace_command == "projects":
+        for name in workspace.projects():
+            print(name)
+        return 0
+    if args.workspace_command == "validate":
+        config = workspace.config
+        print(f"ok: {config.path} is valid "
+              f"(workspace {config.name!r}, {len(config.projects)} projet(s))")
+        for name, error in workspace.failures.items():
+            print(f"warning: {name!r} unavailable: {error}", file=sys.stderr)
+        return 0
+
+    def progress(message: str) -> None:
+        if sys.stderr.isatty():
+            print(message, file=sys.stderr)
+
+    report = workspace.run(args.intent, approved=args.yes, on_progress=progress)
+    if args.json:
+        print(_json.dumps(report.facts(), indent=2, ensure_ascii=False))
+    else:
+        print(workspace.narrate(report))
+    return 1 if report.global_status == "attention" else 0
+
+
 def main(argv: list[str] | None = None) -> int:
+    _tolerate_narrow_encodings()
     args = _build_parser().parse_args(argv)
+    if args.command == "workspace":
+        try:
+            return _workspace_main(args)
+        except BaygonError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
     try:
         kernel = _select_kernel(args)
         if kernel is None:  # the `projects` listing already printed
@@ -137,6 +277,49 @@ def _select_kernel(args: argparse.Namespace) -> Kernel | None:
     return target.resolve(intent_text, explicit=args.project)
 
 
+def _print_readiness(report: dict) -> None:
+    """The answer to "what works here?", readable at a glance."""
+    print(f"{report['project']} — {report['ready_count']}/{report['total_count']} "
+          "intentions utilisables")
+
+    ready = [entry["intent"] for entry in report["intents"] if entry["ready"]]
+    if ready:
+        print("\nUtilisables :")
+        for name in ready:
+            print(f"  ✓ {name}")
+    if report["commands"]:
+        print(f"  ✓ commandes déclarées, par leur nom : {', '.join(report['commands'])}")
+
+    blocked = [entry for entry in report["intents"] if not entry["ready"]]
+    if blocked:
+        print("\nIndisponibles :")
+        for entry in blocked:
+            reason = []
+            if entry["missing_capabilities"]:
+                reason.append("capacité non déclarée : " + ", ".join(entry["missing_capabilities"]))
+            if entry["missing_permissions"]:
+                reason.append("permission refusée : " + ", ".join(entry["missing_permissions"]))
+            print(f"  ✗ {entry['intent']:<20} {' ; '.join(reason)}")
+
+    failed = [p for p in report["providers"] if p["state"] != "ACTIVE"]
+    if failed or report["failures"]:
+        print("\nFournisseurs en difficulté :")
+        for provider in failed:
+            print(f"  ! {provider['name']:<20} {provider['capability']:<12} {provider['state']}")
+        for name, error in report["failures"].items():
+            print(f"  ! {name:<20} non chargé : {error}")
+
+
+def _report_progress(kernel: Kernel) -> None:
+    """Show progress on an interactive terminal only.
+
+    Piped or redirected output is being read by a program, not by a
+    person waiting: staying silent there keeps the stream clean.
+    """
+    if sys.stderr.isatty():
+        attach_progress(kernel, sys.stderr)
+
+
 def _dispatch(kernel: Kernel, args: argparse.Namespace) -> int:
     if args.command == "validate":
         print(f"ok: {kernel.config.path} is valid (project {kernel.config.project_name!r})")
@@ -148,10 +331,24 @@ def _dispatch(kernel: Kernel, args: argparse.Namespace) -> int:
 
     if args.command == "models":
         for entry in kernel.models():
-            freshness = {True: "à jour", False: "OBSOLÈTE", None: "inconnu"}[entry["up_to_date"]]
+            if entry.get("reachable") is False:
+                # Saying "unknown" would send the operator to a model
+                # that cannot answer; say it cannot be reached.
+                freshness = "INJOIGNABLE"
+            else:
+                freshness = {True: "à jour", False: "OBSOLÈTE",
+                             None: "inconnu"}[entry["up_to_date"]]
             model = entry.get("model") or "—"
             print(f"{entry['name']:<20} {model:<24} {entry['adapter']:<20} "
                   f"{entry['state']:<8} {freshness}")
+        return 0
+
+    if args.command == "doctor":
+        report = kernel.readiness()
+        if args.json:
+            print(json.dumps(report, indent=2, ensure_ascii=False))
+            return 0
+        _print_readiness(report)
         return 0
 
     if args.command == "context":
@@ -188,11 +385,13 @@ def _dispatch(kernel: Kernel, args: argparse.Namespace) -> int:
             print("\nThis plan contains sensitive actions.", file=sys.stderr)
             print("Re-run with --yes to approve it.", file=sys.stderr)
             return 3
+        _report_progress(kernel)
         result = kernel.execute(plan, approved=args.yes)
         print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False, default=str))
         return 0 if result.success else 1
 
     if args.command == "resume":
+        _report_progress(kernel)
         result = kernel.resume(plan_id=args.plan, approved=args.yes)
         print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False, default=str))
         return 0 if result.success else 1

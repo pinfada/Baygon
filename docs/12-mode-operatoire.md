@@ -79,6 +79,7 @@ $ baygon explain "restaure la production"  # comprendre le raisonnement
 $ baygon run "deploy to staging"         # exécuter
 $ baygon run "Déploie en production" --yes   # action sensible : validation
 $ baygon run "montre-moi les erreurs des dernières 24 heures en production"
+$ baygon run "montre-moi les traces de la production"      # capacité traces
 $ baygon run "analyse le dernier incident en production"   # diagnostic complet
 $ baygon run "pourquoi la production est lente ?"          # idem : diagnostic
 $ baygon run "ouvre une console ssh en production"
@@ -87,19 +88,39 @@ $ baygon run "liste les fichiers du stockage"
 $ baygon run "sauvegarde la production"
 $ baygon run "restaure la production" --yes  # CRITICAL : --yes obligatoire
 $ baygon run "Résous le bug de paiement" --yes   # boucle Dev → QA → Revue (§6)
+$ baygon run "corrige le dernier incident"       # reprend l'échec journalisé
+$ baygon run "corrige le dernier diagnostic"     # reprend ce que le Diagnose a trouvé
 $ baygon run "propose les changements en revue" --yes
 $ baygon resume                          # reprendre après une panne fournisseur
 $ baygon history                         # tout est tracé
+$ baygon workspace run "est-ce que nous avons des incidents ?"  # tout le parc (§ chap. 14)
 $ baygon context                         # ce que Baygon sait du projet
 $ baygon capabilities                    # capacités et implémentations actives
 $ baygon projects                        # projets gérés (voir §8)
 ```
 
-Les quinze intentions reconnues : `DeployProject`, `RollbackDeployment`,
+Les seize intentions reconnues : `DeployProject`, `RollbackDeployment`,
 `FixBug`, `ProposeChanges`, `BackupProject`, `RestoreProject`, `OpenConsole`,
 `RestartService`, `ShowDatabase`, `ShowStorage`, `Diagnose`, `ShowLogs`,
-`ShowMetrics`, `ShowStatus`, `ShowHistory` — plus toute commande déclarée dans
-la section `commands` de `baygon.yaml`, reconnue par son nom.
+`ShowTraces`, `ShowMetrics`, `ShowStatus`, `ShowHistory` — plus toute commande
+déclarée dans la section `commands` de `baygon.yaml`, reconnue par son nom.
+
+Sur un terminal interactif, `baygon run` et `baygon resume` affichent
+l'avancement du plan sur la sortie d'erreur, étape par étape et avec sa durée
+(EF-020) — la sortie standard, elle, ne contient que le résultat JSON :
+
+```console
+$ baygon run "pourquoi la production est lente ?"
+  [1/4] logs.fetch …
+  [1/4] logs.fetch ok (12 ms)
+  [2/4] metrics.fetch ok (8 ms)
+  [3/4] deployment.status ok (140 ms)
+  [4/4] ai.complete ok (2140 ms)
+```
+
+`baygon resume` rejoue **le plan qui a échoué** : les options de session
+(`--no-ai`, `--model`) sont enregistrées avec le plan, donc une exécution
+lancée en mode déterministe est reprise en mode déterministe.
 
 Vous n'avez pas à connaître ces noms : **décrivez le symptôme**, Baygon
 reconnaît l'intention.
@@ -171,6 +192,8 @@ secrets vont **toujours** dans l'environnement, jamais dans le fichier.
 | logs        | `baygon_plugins.loki_logs:LokiLogs`                 | `LOKI_TOKEN` (option) |
 | logs        | `baygon_plugins.file_logs:FileLogs`                 | —              |
 | metrics     | `baygon_plugins.prometheus_metrics:PrometheusMetrics` | `PROMETHEUS_TOKEN` (option) |
+| metrics     | `baygon_plugins.static_metrics:StaticMetrics`       | —              |
+| traces      | `baygon_plugins.tempo_traces:TempoTraces`           | `TEMPO_TOKEN` (option) |
 | database    | `baygon_plugins.postgres_database:PostgresDatabase` | variable DSN (ex. `PROD_DATABASE_URL`) |
 | storage/backup/recovery | `baygon_plugins.s3:S3Storage` / `S3Backup` / `S3Recovery` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` |
 | ssh         | `baygon_plugins.ssh_access:SSHAccess`               | clés ssh usuelles |
@@ -400,5 +423,20 @@ il n'y a rien d'autre à restaurer.
 
 ```console
 $ python -m unittest discover -s tests     # depuis le dépôt Baygon
-Ran 228 tests ... OK
+Ran 293 tests ... OK (skipped=5)
 ```
+
+Les cinq tests ignorés sont les tests IA réels : ils ne s'exécutent que si un
+endpoint est déclaré, pour que la suite normale reste hermétique. Pour
+vérifier que votre modèle répond réellement à travers Baygon :
+
+```console
+$ export BAYGON_LIVE_AI_BASE_URL=http://localhost:11434/v1
+$ export BAYGON_LIVE_AI_MODEL=<votre modèle>
+$ python -m unittest tests.test_live_ai -v
+```
+
+C'est le contrôle à faire après avoir branché un vrai fournisseur IA : il
+confirme que l'endpoint sert bien le modèle déclaré, qu'une complétion revient
+exploitable, que `--no-ai` ne le joint pas, et qu'un diagnostic complet passe
+de bout en bout.

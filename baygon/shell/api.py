@@ -28,7 +28,8 @@ import os
 import threading
 import time
 import urllib.parse
-from collections import deque
+from collections import OrderedDict, deque
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -59,24 +60,83 @@ def resolve_api_token(kernel: Kernel, env_var: str = TOKEN_ENV_VAR) -> str | Non
         return None
 
 
-class RateLimiter:
-    """Sliding-window throttle per client (ENF-011: abuse stays isolated)."""
+#: Length of the throttling window, in seconds.
+WINDOW_SECONDS = 60
+#: Upper bound on the number of clients tracked at once. Reached only
+#: when more distinct addresses than this knock within a single window.
+DEFAULT_MAX_CLIENTS = 10_000
 
-    def __init__(self, per_minute: int) -> None:
+
+class RateLimiter:
+    """Sliding-window throttle per client (ENF-011: abuse stays isolated).
+
+    Memory is bounded on both sides: windows that have gone quiet are
+    swept once per window, and the number of tracked clients never
+    exceeds ``max_clients`` — a flood of forged source addresses cannot
+    grow the server's memory without end. Clients are held in
+    least-recently-seen order, so the one still knocking is the last
+    that would ever be dropped.
+    """
+
+    def __init__(
+        self,
+        per_minute: int,
+        max_clients: int = DEFAULT_MAX_CLIENTS,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self.per_minute = per_minute
-        self._hits: dict[str, deque[float]] = {}
+        self.max_clients = max_clients
+        self._clock = clock
+        self._hits: OrderedDict[str, deque[float]] = OrderedDict()
+        self._last_sweep = clock()
         self._lock = threading.Lock()
 
-    def allow(self, client: str) -> bool:
-        now = time.monotonic()
+    def tracked_clients(self) -> list[str]:
+        """Clients currently held in memory (least recently seen first)."""
         with self._lock:
-            hits = self._hits.setdefault(client, deque())
-            while hits and now - hits[0] > 60:
+            return list(self._hits)
+
+    def allow(self, client: str) -> bool:
+        now = self._clock()
+        with self._lock:
+            self._forget_quiet_clients(now)
+            hits = self._hits.get(client)
+            if hits is None:
+                hits = self._hits[client] = deque()
+            # Seeing a client refreshes its position: eviction always
+            # starts with whoever has been quiet the longest.
+            self._hits.move_to_end(client)
+            while hits and now - hits[0] > WINDOW_SECONDS:
                 hits.popleft()
-            if len(hits) >= self.per_minute:
-                return False
-            hits.append(now)
-            return True
+            allowed = len(hits) < self.per_minute
+            if allowed:
+                hits.append(now)
+            self._enforce_cap()
+            return allowed
+
+    def _forget_quiet_clients(self, now: float) -> None:
+        """Drop windows that have left the minute. Swept once per window."""
+        if now - self._last_sweep < WINDOW_SECONDS:
+            return
+        self._last_sweep = now
+        # A window whose last hit has left the minute says nothing about
+        # the present: dropping it loses no throttling state.
+        stale = [
+            name for name, hits in self._hits.items()
+            if not hits or now - hits[-1] > WINDOW_SECONDS
+        ]
+        for name in stale:
+            del self._hits[name]
+
+    def _enforce_cap(self) -> None:
+        """Last-resort bound when more clients than the cap are all active.
+
+        Entries go least-recently-seen first, so the client currently
+        being served — and any client still knocking — is never the one
+        dropped.
+        """
+        while len(self._hits) > self.max_clients:
+            self._hits.popitem(last=False)
 
 
 class BaygonAPIHandler(BaseHTTPRequestHandler):
@@ -155,6 +215,10 @@ class BaygonAPIHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(data)))
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("X-Frame-Options", "DENY")
+            # The page ships with the server: a cached copy is an older
+            # Baygon's interface talking to a newer one. Upgrading the
+            # server must be enough to upgrade what the operator runs.
+            self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(data)
         elif self.path == "/health":
@@ -172,7 +236,13 @@ class BaygonAPIHandler(BaseHTTPRequestHandler):
             return
         elif self.path.split("?")[0] == "/projects":
             self._json(200, self.target.projects())
-        elif self.path.split("?")[0] in ("/capabilities", "/models", "/context", "/history"):
+        elif self.path.split("?")[0] == "/doctor" and self._query_project() is None:
+            # Without a project named, answer for every one of them:
+            # the overview is the whole point of asking here.
+            self._json(200, self.target.readiness())
+        elif self.path.split("?")[0] in (
+            "/capabilities", "/models", "/context", "/history", "/doctor"
+        ):
             try:
                 kernel = self._route(project=self._query_project())
             except BaygonError as exc:
@@ -183,6 +253,7 @@ class BaygonAPIHandler(BaseHTTPRequestHandler):
                 "/models": kernel.models,
                 "/context": kernel.context,
                 "/history": kernel.history,
+                "/doctor": kernel.readiness,
             }[self.path.split("?")[0]]
             self._json(200, reader())
         else:

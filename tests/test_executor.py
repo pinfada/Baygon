@@ -70,7 +70,11 @@ class ExecutorTest(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertEqual(result.failure["step"], "2")
         self.assertIn("provider exploded", result.failure["cause"])
-        self.assertIn("retry the step", result.failure["options"])
+        # The advice must be about *this* capability, not a generic retry.
+        self.assertTrue(
+            any("deployment" in option for option in result.failure["options"]),
+            result.failure["options"],
+        )
         # The plan was interrupted: the notification step never ran.
         self.assertEqual(notify.messages, [])
 

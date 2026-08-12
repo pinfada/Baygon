@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import datetime
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -48,6 +49,27 @@ class StepResult:
     success: bool
     output: Any = None
     error: str | None = None
+    #: Start, end and duration of the step (ENF-008).
+    started_at: str = ""
+    finished_at: str = ""
+    duration_ms: float = 0.0
+    #: True when the output was reused from a previous execution rather
+    #: than recomputed — it cost no time and must not claim otherwise.
+    reused: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.step.id,
+            "capability": self.step.capability,
+            "action": self.step.action,
+            "success": self.success,
+            "output": self.output,
+            "error": self.error,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "duration_ms": self.duration_ms,
+            "reused": self.reused,
+        }
 
 
 @dataclass
@@ -58,6 +80,7 @@ class ExecutionResult:
     finished_at: str
     steps: list[StepResult] = field(default_factory=list)
     failure: dict[str, Any] | None = None
+    duration_ms: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -65,23 +88,23 @@ class ExecutionResult:
             "success": self.success,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
-            "steps": [
-                {
-                    "id": r.step.id,
-                    "capability": r.step.capability,
-                    "action": r.step.action,
-                    "success": r.success,
-                    "output": r.output,
-                    "error": r.error,
-                }
-                for r in self.steps
-            ],
+            "duration_ms": self.duration_ms,
+            "steps": [step.to_dict() for step in self.steps],
             "failure": self.failure,
         }
 
 
 def _now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def _elapsed_ms(since: float) -> float:
+    """Milliseconds since a monotonic mark, rounded to the microsecond.
+
+    A monotonic clock is used rather than the wall clock so a system
+    time adjustment can never report a negative duration.
+    """
+    return round((time.monotonic() - since) * 1000, 3)
 
 
 #: `{{step_id.field}}` in a string parameter is replaced by that field of
@@ -122,35 +145,35 @@ class ExecutionEngine:
             raise ValidationRequiredError(plan.id)
 
         started = _now()
-        self._bus.publish(events.EXECUTION_STARTED, plan=plan.id)
+        mark = time.monotonic()
+        ordered = self._ordered(plan.steps)
+        self._bus.publish(events.EXECUTION_STARTED, plan=plan.id, steps=len(ordered))
         results: list[StepResult] = []
         outputs: dict[str, Any] = {}
         completed = completed or {}
 
-        for step in self._ordered(plan.steps):
+        for step in ordered:
             if step.id in completed:
                 output = completed[step.id]
-                results.append(StepResult(step=step, success=True, output=output))
+                instant = _now()
+                results.append(StepResult(
+                    step=step, success=True, output=output, reused=True,
+                    started_at=instant, finished_at=instant, duration_ms=0.0,
+                ))
                 outputs[step.id] = output
                 self._bus.publish(
                     events.STEP_FINISHED, step=step.id, capability=step.capability,
-                    success=True, reused=True,
+                    action=step.action, success=True, reused=True, duration_ms=0.0,
                 )
                 continue
-            options: list[str] | None = None
-            try:
-                self._check_permission(step)
-            except StepExecutionError as exc:
-                result = StepResult(step=step, success=False, error=exc.cause)
-                options = exc.options
-            else:
-                result = self._run_step(step, outputs)
+            result, options = self._run_step(step, outputs)
             results.append(result)
             if not result.success:
                 failure = {
                     "step": step.id,
                     "cause": result.error,
-                    "options": options or self._failure_options(step),
+                    "options": (options or self._failure_options(step))
+                    + self._handover_offer(),
                 }
                 self._bus.publish(
                     events.PROVIDER_FAILED,
@@ -162,15 +185,23 @@ class ExecutionEngine:
                 execution = ExecutionResult(
                     plan=plan, success=False, started_at=started,
                     finished_at=_now(), steps=results, failure=failure,
+                    duration_ms=_elapsed_ms(mark),
                 )
-                self._bus.publish(events.EXECUTION_FINISHED, plan=plan.id, success=False)
+                self._bus.publish(
+                    events.EXECUTION_FINISHED, plan=plan.id, success=False,
+                    duration_ms=execution.duration_ms,
+                )
                 return execution
             outputs[step.id] = result.output
 
         execution = ExecutionResult(
-            plan=plan, success=True, started_at=started, finished_at=_now(), steps=results
+            plan=plan, success=True, started_at=started, finished_at=_now(),
+            steps=results, duration_ms=_elapsed_ms(mark),
         )
-        self._bus.publish(events.EXECUTION_FINISHED, plan=plan.id, success=True)
+        self._bus.publish(
+            events.EXECUTION_FINISHED, plan=plan.id, success=True,
+            duration_ms=execution.duration_ms,
+        )
         return execution
 
     # ------------------------------------------------------------------
@@ -216,9 +247,24 @@ class ExecutionEngine:
                 ["declare 'permissions.production: true' in baygon.yaml"],
             )
 
-    def _run_step(self, step: Step, outputs: dict[str, Any]) -> StepResult:
-        self._bus.publish(events.STEP_STARTED, step=step.id, capability=step.capability)
+    def _run_step(
+        self, step: Step, outputs: dict[str, Any]
+    ) -> tuple[StepResult, list[str] | None]:
+        """Check, run and time one step.
+
+        Returns the result and, when the step was refused for lack of a
+        permission, the follow-up actions that would unblock it. Start
+        and end are published either way: a refusal is as observable as
+        a run (ENF-008).
+        """
+        self._bus.publish(
+            events.STEP_STARTED, step=step.id, capability=step.capability,
+            action=step.action,
+        )
+        started, mark = _now(), time.monotonic()
+        options: list[str] | None = None
         try:
+            self._check_permission(step)
             implementation = self._registry.resolve(
                 step.capability, requested=step.implementation
             )
@@ -234,16 +280,55 @@ class ExecutionEngine:
                 parameters["context"] = {dep: outputs.get(dep) for dep in step.depends_on}
             output = action(**parameters)
             result = StepResult(step=step, success=True, output=output)
+        except StepExecutionError as exc:
+            # Refused before anything was contacted: the cause names the
+            # missing permission and the options say how to grant it.
+            result = StepResult(step=step, success=False, error=exc.cause)
+            options = exc.options
         except Exception as exc:
             result = StepResult(step=step, success=False, error=str(exc))
+            # An implementation that knows the way out says so; nothing
+            # generic can compete with what the adapter already holds.
+            carried = getattr(exc, "options", None)
+            options = list(carried) if carried else None
+        result.started_at = started
+        result.finished_at = _now()
+        result.duration_ms = _elapsed_ms(mark)
         self._bus.publish(
-            events.STEP_FINISHED, step=step.id, capability=step.capability, success=result.success
+            events.STEP_FINISHED, step=step.id, capability=step.capability,
+            action=step.action, success=result.success, duration_ms=result.duration_ms,
         )
-        return result
+        return result, options
+
+    def _handover_offer(self) -> list[str]:
+        """Offer the coding agent, but only where one is declared.
+
+        Baygon proposes, the operator decides: the incident is handed
+        over only if someone asks for it, and the fix still goes through
+        the declared test command and the usual validation.
+        """
+        if not self._registry.is_available("developer"):
+            return []
+        return ["or hand it to the coding agent: run \"corrige le dernier incident\""]
 
     def _failure_options(self, step: Step) -> list[str]:
-        options = ["retry the step", "abort the intention"]
-        implementations = self._registry.capabilities().get(step.capability, [])
-        if len(implementations) > 1:
-            options.append("retry with another implementation")
+        """What to try when the implementation named nothing better.
+
+        Deliberately concrete: "retry the step" is wrong by
+        construction for most failures, and "retry with another
+        implementation" is useless without saying which.
+        """
+        declared = self._registry.capabilities().get(step.capability, [])
+        if not declared:
+            return [
+                f"no provider declared for capability {step.capability!r}",
+                f"declare one under 'providers' in baygon.yaml with type: {step.capability}",
+            ]
+        others = [
+            impl["name"] for impl in declared
+            if impl["name"] != (step.implementation or "")
+        ]
+        options = [f"check the {step.capability} provider and run the intention again"]
+        if len(declared) > 1:
+            options.append(f"or use another declared implementation: {', '.join(others)}")
         return options

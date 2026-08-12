@@ -25,6 +25,7 @@ import urllib.request
 from typing import Any
 
 from baygon.capabilities import MetricsCapability
+from baygon_plugins._http import DEFAULT_CONNECT_TIMEOUT_SECONDS, require_reachable
 
 
 class PrometheusMetrics(MetricsCapability):
@@ -44,10 +45,21 @@ class PrometheusMetrics(MetricsCapability):
             headers["Authorization"] = f"Bearer {token}"
         return headers
 
+    def response_timeout(self) -> float:
+        return float(self.config.get("timeout_seconds", 30.0))
+
+    def connect_timeout(self) -> float:
+        return float(
+            self.config.get("connect_timeout_seconds", DEFAULT_CONNECT_TIMEOUT_SECONDS)
+        )
+
     def _get_json(self, path: str, params: dict[str, Any]) -> Any:
-        url = str(self.config["url"]).rstrip("/") + path + "?" + urllib.parse.urlencode(params)
+        base = str(self.config["url"]).rstrip("/")
+        # A stack that is down must be said so in seconds, and by name.
+        require_reachable("metrics", base, self.connect_timeout())
+        url = base + path + "?" + urllib.parse.urlencode(params)
         request = urllib.request.Request(url, headers=self._headers())
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=self.response_timeout()) as response:
             return json.load(response)
 
     # ------------------------------------------------------------------

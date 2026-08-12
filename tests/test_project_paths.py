@@ -8,13 +8,15 @@ projects stop being independent (chapter 3).
 """
 
 import os
-import subprocess
+import shutil
+import sys
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
 
 from baygon.core.kernel import Kernel
+from baygon_plugins.coding_agent import CodingAgent
 
 SHELL_YAML = textwrap.dedent(
     """
@@ -30,11 +32,18 @@ SHELL_YAML = textwrap.dedent(
         type: developer
         plugin: baygon_plugins.coding_agent:CodingAgent
         default: true
-        options: {command: ["./agent.sh"], cwd: .}
+        options: {command: ["__PYTHON__", "agent.py"], cwd: .}
     environments: {development: {}, staging: {}, production: {}}
     commands: {test: "cat marker.txt"}
     """
-)
+).replace("__PYTHON__", sys.executable.replace("\\", "/"))
+
+#: A coding agent that only reports where it was run. Written in Python
+#: rather than as a shell script so the test states the same thing on
+#: every operating system Baygon claims to support (EF-018). It reports
+#: the real path: Windows hands short 8.3 names ("RUNNER~1") to child
+#: processes, which name the same directory by a different string.
+AGENT_SCRIPT = "import os; print(os.path.realpath(os.getcwd()))\n"
 
 
 class ProjectRelativePathTest(unittest.TestCase):
@@ -45,9 +54,7 @@ class ProjectRelativePathTest(unittest.TestCase):
         self.project.mkdir()
         (self.project / "baygon.yaml").write_text(SHELL_YAML, encoding="utf-8")
         (self.project / "marker.txt").write_text("inside the project\n", encoding="utf-8")
-        agent = self.project / "agent.sh"
-        agent.write_text("#!/bin/sh\necho agent ran in $(pwd)\n", encoding="utf-8")
-        agent.chmod(0o755)
+        (self.project / "agent.py").write_text(AGENT_SCRIPT, encoding="utf-8")
         # Run from somewhere else entirely, as a multi-project server does.
         elsewhere = Path(tmp.name) / "elsewhere"
         elsewhere.mkdir()
@@ -66,11 +73,28 @@ class ProjectRelativePathTest(unittest.TestCase):
     def test_coding_agent_runs_inside_the_project(self) -> None:
         developer = self.kernel.registry.resolve("developer")
         result = developer.fix(description="peu importe")
-        self.assertIn(str(self.project.resolve()), result["output"])
+        reported = Path(result["output"].strip().splitlines()[-1])
+        self.assertEqual(reported.resolve(), self.project.resolve())
+
+    def test_a_relative_agent_program_is_resolved_against_the_project(self) -> None:
+        """`command: ["./agent"]` names a program the project ships.
+
+        What counts as "a program" is the platform's business: an
+        extension listed in PATHEXT on Windows, the executable bit
+        elsewhere. The fixture follows the platform so the assertion
+        stays about the *path* being resolved against the project.
+        """
+        name = "agent.bat" if os.name == "nt" else "agent.sh"
+        program = self.project / name
+        program.write_text("", encoding="utf-8")
+        program.chmod(0o755)
+        agent = CodingAgent({"command": [f"./{name}"]})
+        agent.project_dir = self.project
+        self.assertTrue(agent.health_check())
 
     def test_absolute_paths_are_left_untouched(self) -> None:
         other = Path(tempfile.mkdtemp())
-        self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(other)]))
+        self.addCleanup(shutil.rmtree, other, True)
         (other / "marker.txt").write_text("outside\n", encoding="utf-8")
         workspace = self.kernel.registry.resolve("workspace")
         workspace.config["cwd"] = str(other)

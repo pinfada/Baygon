@@ -6,9 +6,13 @@ on:
 
 jobs:
   tests:
-    runs-on: ubuntu-latest
+    # EF-018 requires Linux, macOS and Windows: a portability claim that
+    # is never exercised is a claim, not a guarantee.
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4

@@ -17,6 +17,8 @@ from baygon.capabilities import (
     RecoveryCapability,
     RepositoryCapability,
     ReviewCapability,
+    ServiceCapability,
+    TracesCapability,
     WorkspaceCapability,
 )
 
@@ -95,6 +97,14 @@ class FakeMetrics(MetricsCapability):
         return {"latency_ms": 10}
 
 
+class FakeTraces(TracesCapability):
+    identifier = "fake-traces"
+
+    def fetch(self, environment: str, since_hours: int = 1, **params: Any) -> list[dict[str, Any]]:
+        return [{"id": "trace-1", "service": "checkout", "name": "POST /pay",
+                 "duration_ms": 1200.0, "environment": environment}]
+
+
 class CountingRepository(FakeRepository):
     """Counts calls so tests can prove a step was not re-executed."""
 
@@ -129,6 +139,46 @@ class FlakyDeployment(FakeDeployment):
         return super().deploy(environment, **params)
 
 
+#: Shared switch: how many times FlakyStatus.status must still fail.
+FLAKY_STATUS_FAILURES: list[bool] = []
+
+
+class FlakyStatusDeployment(FakeDeployment):
+    """`status` fails while the switch is armed — a transient read outage."""
+
+    identifier = "flaky-status"
+
+    def status(self, environment: str, **params: Any) -> dict[str, Any]:
+        if FLAKY_STATUS_FAILURES and FLAKY_STATUS_FAILURES.pop():
+            raise RuntimeError("status backend unreachable")
+        return super().status(environment, **params)
+
+
+class RecordingAI(AICapability):
+    """Records every call so a test can prove the model was never used."""
+
+    identifier = "recording-ai"
+    calls: list[str] = []
+
+    def complete(self, prompt: str, context: dict[str, Any] | None = None, **params: Any) -> str:
+        RecordingAI.calls.append(prompt)
+        return "analysis"
+
+
+class ObservableService(ServiceCapability):
+    """A supervisor that can be asked what it sees, not only told to act."""
+
+    identifier = "observable-service"
+
+    def restart(self, service: str, environment: str, **params: Any) -> dict[str, Any]:
+        return {"service": service, "environment": environment,
+                "state": "Up 2 hours", "verified": True}
+
+    def status(self, service: str, environment: str, **params: Any) -> dict[str, Any]:
+        return {"service": service, "environment": environment,
+                "state": "Up 2 hours", "verified": True}
+
+
 class FakeWorkspace(WorkspaceCapability):
     identifier = "fake-workspace"
 
@@ -156,7 +206,9 @@ class FakeRecovery(RecoveryCapability):
 
 
 #: Shared state for the FixBug loop tests (reset in each test's setUp).
-FIXBUG_STATE: dict[str, Any] = {"attempts": 0, "fixed_after": 1, "feedbacks": []}
+FIXBUG_STATE: dict[str, Any] = {
+    "attempts": 0, "fixed_after": 1, "feedbacks": [], "descriptions": []
+}
 
 
 class LoopDevAgent(DeveloperCapability):
@@ -167,6 +219,7 @@ class LoopDevAgent(DeveloperCapability):
     def fix(self, description: str, feedback: str | None = None, **params: Any) -> dict[str, Any]:
         FIXBUG_STATE["attempts"] += 1
         FIXBUG_STATE["feedbacks"].append(feedback)
+        FIXBUG_STATE.setdefault("descriptions", []).append(description)
         return {"state": "patched", "attempt": FIXBUG_STATE["attempts"]}
 
 
@@ -179,6 +232,37 @@ class GatedWorkspace(WorkspaceCapability):
         if FIXBUG_STATE["attempts"] < FIXBUG_STATE["fixed_after"]:
             raise RuntimeError("2 tests failed: test_refund, test_checkout")
         return {"command": command, "exit_code": 0}
+
+
+class DiagnosingAI(AICapability):
+    """AI double that answers like a model reading the gathered context."""
+
+    identifier = "diagnosing-ai"
+    analysis = ("Le worker de paiement plante sur une NullPointerException "
+                "dans payment.py ligne 42 à chaque webhook Stripe.")
+
+    def complete(self, prompt: str, context: dict[str, Any] | None = None, **params: Any) -> str:
+        return DiagnosingAI.analysis
+
+
+class SynthesizingAI(AICapability):
+    """Orchestrator double: writes the report a meta-agent would write."""
+
+    identifier = "synthesizing-ai"
+    prompts: list[str] = []
+
+    def complete(self, prompt: str, context: dict[str, Any] | None = None, **params: Any) -> str:
+        SynthesizingAI.prompts.append(prompt)
+        return "SYNTHÈSE DU MODÈLE : tout est sous contrôle."
+
+
+class ExplodingAI(AICapability):
+    """AI double whose every call fails — the model is unreachable."""
+
+    identifier = "exploding-ai"
+
+    def complete(self, prompt: str, context: dict[str, Any] | None = None, **params: Any) -> str:
+        raise RuntimeError("model unreachable")
 
 
 class ClassifierAI(AICapability):

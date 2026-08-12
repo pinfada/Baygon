@@ -16,6 +16,21 @@ from pathlib import Path
 from typing import Any
 
 
+class ActionableError(RuntimeError):
+    """A failure that knows what would make the call work.
+
+    An implementation almost always holds the remedy at the moment it
+    gives up: the variable has a name, the endpoint has an address, the
+    declared services have a list. Carrying that alongside the cause is
+    what turns "it failed" into something an operator can act on —
+    deterministically, without asking a model to guess it back.
+    """
+
+    def __init__(self, message: str, options: list[str] | None = None) -> None:
+        super().__init__(message)
+        self.options = list(options or [])
+
+
 class ImplementationState(str, enum.Enum):
     ACTIVE = "ACTIVE"
     INACTIVE = "INACTIVE"
@@ -121,6 +136,22 @@ class MetricsCapability(CapabilityImplementation):
 
     @abc.abstractmethod
     def fetch(self, environment: str, **params: Any) -> dict[str, Any]: ...
+
+
+class TracesCapability(CapabilityImplementation):
+    """Distributed trace consultation. Baygon never stores traces.
+
+    A trace is normalized to a provider-independent shape so the rest of
+    Baygon never learns which backend answered:
+    ``{"id", "service", "name", "duration_ms", "start"}``.
+    """
+
+    capability = "traces"
+
+    @abc.abstractmethod
+    def fetch(
+        self, environment: str, since_hours: int = 1, **params: Any
+    ) -> list[dict[str, Any]]: ...
 
 
 class DatabaseCapability(CapabilityImplementation):
@@ -229,6 +260,16 @@ class ServiceCapability(CapabilityImplementation):
     @abc.abstractmethod
     def restart(self, service: str, environment: str, **params: Any) -> dict[str, Any]: ...
 
+    @abc.abstractmethod
+    def status(self, service: str, environment: str, **params: Any) -> dict[str, Any]:
+        """What state the service is observed to be in.
+
+        An exit code says a command ran; it says nothing about the
+        system. Acting and observing are two questions, so they are two
+        actions — and an implementation that cannot observe must say so
+        rather than let a successful command pass for a running service.
+        """
+
 
 class ReviewCapability(CapabilityImplementation):
     """Publication of work for human review.
@@ -264,6 +305,9 @@ class AICapability(CapabilityImplementation):
             "model": self.config.get("model"),
             "up_to_date": None,
             "known_models": [],
+            #: True/False when the provider can be probed, None when the
+            #: question does not apply (an offline model is always there).
+            "reachable": None,
         }
 
 
@@ -276,6 +320,7 @@ CAPABILITY_CONTRACTS: dict[str, type[CapabilityImplementation]] = {
         DeploymentCapability,
         LogsCapability,
         MetricsCapability,
+        TracesCapability,
         DatabaseCapability,
         SecretsCapability,
         NotificationCapability,

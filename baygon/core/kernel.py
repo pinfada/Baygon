@@ -11,10 +11,11 @@ Lifecycle:
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from baygon.core import events
+from baygon.core import events, readiness
 from baygon.core.audit import AuditJournal
 from baygon.core.config import BaygonConfig, load_config
 from baygon.core.context import ContextEngine
@@ -28,17 +29,88 @@ from baygon.core.registry import CapabilityRegistry
 
 def _plan_with_feedback(plan: Plan, feedback: str) -> Plan:
     """Copy of the plan with the failure report injected into the
-    feedback step's parameters. Same id: it is the same intention."""
+    feedback step's parameters. Same id: it is the same intention.
+
+    Every other field of every step is carried over untouched — in
+    particular the explicitly requested implementation, which a retry
+    round must never silently trade for the default one.
+    """
     steps = []
     for step in plan.steps:
         parameters = dict(step.parameters)
         if step.id == plan.feedback_step:
             parameters["feedback"] = feedback
-        steps.append(Step(id=step.id, capability=step.capability, action=step.action,
-                          parameters=parameters, depends_on=list(step.depends_on),
-                          risk=step.risk))
-    return Plan(id=plan.id, intent=plan.intent, steps=steps, reasoning=plan.reasoning,
-                max_rounds=plan.max_rounds, feedback_step=plan.feedback_step)
+        steps.append(replace(step, parameters=parameters, depends_on=list(step.depends_on)))
+    return replace(plan, steps=steps)
+
+
+def _briefed(plan: Plan, description: str, origin: str) -> Plan:
+    """Copy of the plan with the description injected into its developer
+    steps, and the origin of that description told first (Article 8)."""
+    steps = [
+        replace(step, parameters={**step.parameters, "description": description})
+        if step.capability == "developer" else step
+        for step in plan.steps
+    ]
+    return replace(plan, steps=steps, reasoning=[origin, *plan.reasoning])
+
+
+def _compact(output: Any) -> str:
+    """One journal output, flattened and bounded for a briefing line."""
+    text = " ".join(str(output).split())
+    return text[:500] + (" …" if len(text) > 500 else "")
+
+
+def _bounded(text: str, limit: int = 4000) -> str:
+    """Prose kept whole but bounded — the description it joins ends up
+    on a command line, which has a ceiling of its own."""
+    return text if len(text) <= limit else text[:limit] + " …"
+
+
+def _carry_descriptions(plan: Plan, recorded: dict[str, Any]) -> Plan:
+    """Rebuilt developer steps take back the description that was run.
+
+    A briefed description ("corrige le dernier incident/diagnostic")
+    belongs to the plan the user approved, not to the words that
+    produced it: rebuilding from the words alone would hand the agent
+    the phrase — or a description drawn from a journal that has moved
+    on since the approval. For an ordinary fix the recorded and rebuilt
+    descriptions are identical, so this changes nothing.
+    """
+    by_id = {step["id"]: step for step in recorded["steps"]}
+    steps = []
+    for step in plan.steps:
+        old = by_id.get(step.id)
+        if (
+            step.capability == "developer"
+            and old is not None
+            and (old["capability"], old["action"]) == (step.capability, step.action)
+            and "description" in old["parameters"]
+        ):
+            step = replace(
+                step,
+                parameters={**step.parameters,
+                            "description": old["parameters"]["description"]},
+            )
+        steps.append(step)
+    return replace(plan, steps=steps)
+
+
+def _reusable(plan: Plan, recorded: list[dict[str, Any]]) -> dict[str, Any]:
+    """Recorded outputs that still belong to a step of the rebuilt plan.
+
+    A result belongs to a step, not to an identifier. Between the
+    failure and the resume, ``baygon.yaml`` may have changed and the
+    rebuilt plan may no longer be step-for-step identical; feeding a
+    stale output into a step that is not the one that produced it would
+    be worse than simply running that step again.
+    """
+    expected = {step.id: (step.capability, step.action) for step in plan.steps}
+    return {
+        step["id"]: step["output"]
+        for step in recorded
+        if step["success"] and expected.get(step["id"]) == (step["capability"], step["action"])
+    }
 
 
 class Kernel:
@@ -100,10 +172,94 @@ class Kernel:
         ai_model: str | None = None,
     ) -> Plan:
         plan = self.intent_engine.plan(text, source=source, ai=ai, ai_model=ai_model)
+        # Only a fix has a developer step to brief: on any other intention
+        # the phrasing is just context ("pourquoi ce dernier incident ?").
+        if plan.intent.name == "FixBug":
+            if plan.intent.parameters.get("from_last_incident"):
+                plan = self._describe_last_incident(plan)
+            elif plan.intent.parameters.get("from_last_diagnosis"):
+                plan = self._describe_last_diagnosis(plan)
         self.bus.publish(
             events.PLAN_CREATED, plan=plan.id, intent=plan.intent.name, risk=plan.risk.value
         )
         return plan
+
+    def _describe_last_incident(self, plan: Plan) -> Plan:
+        """Replace the description with what actually failed.
+
+        The Intent Engine recognised "the last incident" but cannot
+        know what it was: it reads language, never state. The journal
+        is the kernel's, so the kernel fills it in — the agent then
+        receives the cause, the step and the intention that was being
+        served, instead of the words the operator typed.
+        """
+        entry = self._last_failure(None)
+        if entry is None:
+            raise BaygonError(
+                "no failure recorded: there is no incident to hand over. "
+                "Describe the bug instead, or run the intention that fails first"
+            )
+        failure = entry["result"]["failure"] or {}
+        step = next(
+            (s for s in entry["result"]["steps"] if s["id"] == failure.get("step")), {}
+        )
+        description = (
+            f"Corrige l'incident suivant, survenu en exécutant l'intention "
+            f"{entry['intent']} (« {entry['input']} ») :\n"
+            f"- étape {failure.get('step')} : {step.get('capability')}."
+            f"{step.get('action')}\n"
+            f"- cause : {failure.get('cause')}\n"
+            f"Corrige la cause dans le code du projet, pas le symptôme."
+        )
+        return _briefed(
+            plan,
+            description,
+            f"Description reprise du dernier incident journalisé "
+            f"({entry['intent']}, étape {failure.get('step')})",
+        )
+
+    def _describe_last_diagnosis(self, plan: Plan) -> Plan:
+        """Replace the description with what the last diagnosis found.
+
+        The other side of the incident handoff: a Diagnose that
+        *succeeded* named a probable cause, and the operator should not
+        have to read it on one screen and retype it on another. The
+        model's analysis is preferred; a diagnosis made without AI still
+        hands over its raw evidence (EF-014: degraded, never broken).
+        """
+        entry = self._last_diagnosis()
+        if entry is None:
+            raise BaygonError(
+                "no diagnosis recorded: there is nothing to hand over. "
+                "Run a diagnosis first (e.g. « pourquoi la production est lente ? »)"
+            )
+        recorded = entry["result"]["steps"]
+        # A model can succeed and still say nothing (a tool-use-only
+        # response): an empty answer must not shadow the gathered evidence.
+        analysis = next(
+            (s["output"] for s in recorded
+             if s["capability"] == "ai" and s["success"] and s["output"]),
+            None,
+        )
+        if analysis is None:
+            evidence = "\n".join(
+                f"- {s['capability']}.{s['action']} : {_compact(s['output'])}"
+                for s in recorded if s["success"]
+            )
+            body = f"Constats bruts du diagnostic :\n{evidence}"
+        else:
+            body = f"Diagnostic établi par le modèle :\n{_bounded(str(analysis))}"
+        description = (
+            f"Corrige la cause du problème décrit par ce diagnostic, obtenu en "
+            f"répondant à « {entry['input']} » :\n{body}\n"
+            f"Corrige la cause dans le code du projet, pas le symptôme."
+        )
+        return _briefed(
+            plan,
+            description,
+            "Description reprise du dernier diagnostic journalisé "
+            + ("(analyse du modèle)" if analysis else "(constats bruts, sans IA)"),
+        )
 
     def run(
         self,
@@ -127,7 +283,7 @@ class Kernel:
             name = metadata["name"]
             entry = {"name": name, "adapter": metadata["identifier"],
                      "state": metadata["state"], "model": None,
-                     "up_to_date": None, "known_models": []}
+                     "up_to_date": None, "known_models": [], "reachable": None}
             try:
                 described = self.registry.resolve("ai", requested=name).describe()
             except Exception:
@@ -199,20 +355,37 @@ class Kernel:
 
         Steps that already succeeded are not re-executed: their recorded
         outputs are reused and execution restarts at the failed step.
+
+        The plan is rebuilt with the session options it was built with,
+        so resuming replays the intention the user approved — a run made
+        without AI never grows an AI step on resume (EF-014).
         """
         entry = self._last_failure(plan_id)
         if entry is None:
             target = f" for plan {plan_id!r}" if plan_id else ""
             raise BaygonError(f"nothing to resume{target}: no failed execution recorded")
+        recorded = entry["plan"]
+        session = recorded.get("session") or {}
         plan = self.intent_engine.plan(
-            entry["input"], source=entry["plan"]["intent"].get("source", "shell")
+            entry["input"],
+            source=recorded["intent"].get("source", "shell"),
+            ai=bool(session.get("ai", True)),
+            ai_model=session.get("ai_model"),
         )
-        completed = {
-            step["id"]: step["output"]
-            for step in entry["result"]["steps"]
-            if step["success"]
-        }
-        return self.execute(plan, approved=approved, completed=completed)
+        plan = _carry_descriptions(plan, recorded)
+        return self.execute(
+            plan, approved=approved, completed=_reusable(plan, entry["result"]["steps"])
+        )
+
+    def _last_diagnosis(self) -> dict[str, Any] | None:
+        for entry in reversed(self.audit.entries(limit=1000)):
+            if (
+                entry.get("intent") == "Diagnose"
+                and entry.get("status") == "success"
+                and entry.get("result")
+            ):
+                return entry
+        return None
 
     def _last_failure(self, plan_id: str | None) -> dict[str, Any] | None:
         for entry in reversed(self.audit.entries(limit=1000)):
@@ -222,6 +395,17 @@ class Kernel:
                 continue
             return entry
         return None
+
+    def readiness(self) -> dict[str, Any]:
+        """What can be done on this project, and what is missing.
+
+        Deduced from the configuration alone: no provider is contacted,
+        so the answer is instant and stays truthful even when every
+        backend is down.
+        """
+        return readiness.build(
+            self.config, self.registry, self.intent_engine, self.plugins.failures
+        )
 
     def capabilities(self) -> dict[str, Any]:
         return self.registry.capabilities()

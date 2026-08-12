@@ -86,6 +86,11 @@ class Plan:
     max_rounds: int = 1
     #: Step that receives the previous round's failure report as feedback.
     feedback_step: str | None = None
+    #: Session options that shaped this plan. They travel with it so a
+    #: resumed execution replays the plan the user approved, not another
+    #: one (EF-014, ENF-017).
+    ai: bool = True
+    ai_model: str | None = None
 
     @property
     def risk(self) -> RiskLevel:
@@ -131,6 +136,7 @@ class Plan:
             "requires_validation": self.requires_validation,
             "max_rounds": self.max_rounds,
             "feedback_step": self.feedback_step,
+            "session": {"ai": self.ai, "ai_model": self.ai_model},
             "reasoning": self.reasoning,
             "steps": [step.to_dict() for step in self.steps],
         }
@@ -167,18 +173,47 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
         r"|\b(?:a|ont)\s+(?:doubl[ée]\w*|tripl[ée]\w*|explos[ée]\w*)\b"
         r"|\best\s+tomb[ée]\w*\b|\bplante\w*\b|\bcrash\w*\b",
         re.IGNORECASE)),
+    ("ShowTraces", re.compile(r"\b(traces?|tracing|spans?)\b", re.IGNORECASE)),
     ("ShowLogs", re.compile(r"\b(logs?|journaux|erreurs?|errors?)\b", re.IGNORECASE)),
-    ("ShowMetrics", re.compile(r"\b(metrics?|m[ée]triques?|performances?|lente?s?)\b", re.IGNORECASE)),
+    ("ShowMetrics", re.compile(
+        r"\b(metrics?|m[ée]triques?|statistiques?|stats?|performances?|lente?s?)\b",
+        re.IGNORECASE)),
     ("ShowStatus", re.compile(r"\b(status|statut|[ée]tat)\b", re.IGNORECASE)),
     ("ShowHistory", re.compile(r"\b(historique|history|commits?)\b", re.IGNORECASE)),
 ]
 
 _HOURS = re.compile(r"(\d+)\s*(?:h|heures?|hours?)", re.IGNORECASE)
 
+#: "corrige le dernier incident" — the description is not in the words,
+#: it is in the audit journal. The engine only recognises the phrasing;
+#: filling it in belongs to whoever owns the journal.
+_LAST_INCIDENT = re.compile(
+    r"\b(derni[eè]re?)\s+(incident|[ée]chec|erreur|panne)\b"
+    r"|\blast\s+(incident|failure|error)\b",
+    re.IGNORECASE,
+)
+
+#: "corrige le dernier diagnostic" — same split of responsibilities,
+#: other side of the journal: what a successful Diagnose found.
+_LAST_DIAGNOSIS = re.compile(
+    r"\b(derni[eè]re?)\s+(diagnostic|analyse)\b"
+    r"|\blast\s+(diagnosis|analysis)\b",
+    re.IGNORECASE,
+)
+
 #: Service named after a restart verb: "redémarre le worker" -> worker.
+#: Words that stand between the question and the name it is about:
+#: "dans quel état est le worker" -> worker.
+_FILLER = (
+    r"(?:"
+    r"(?:est|sont|is|are|du|des|de|le|la|les|the|of)\s+"
+    r"|l['’]|d['’]"          # élidés : pas d'espace après l'apostrophe
+    r")*"
+)
+
 _SERVICE = re.compile(
-    r"\b(?:red[ée]marre\w*|restart|relance[rs]?)\s+"
-    r"(?:le |la |les |l['’]|the )?(?P<name>[\w-]+)",
+    r"\b(?:red[ée]marre\w*|restart|relance[rs]?|statut|[ée]tat|status)\s+"
+    + _FILLER + r"(?P<name>[\w-]+)",
     re.IGNORECASE,
 )
 
@@ -214,7 +249,7 @@ class IntentEngine:
         """
         cleaned = text.strip()
         if not cleaned:
-            raise UnknownIntentError(text, self.supported_intents())
+            raise self._unknown(text)
         for name, pattern in _RULES:
             if pattern.search(cleaned):
                 return Intent(
@@ -242,14 +277,34 @@ class IntentEngine:
         # model fails or declines, the behaviour is unchanged (EF-014).
         classified = self._classify_with_ai(cleaned, ai_model) if ai else None
         if classified is not None:
+            parameters = self._extract_parameters(cleaned)
+            if classified.startswith("RunCommand:"):
+                # The model picked one of the project's own commands.
+                classified, command = classified.split(":", 1)
+                parameters["command"] = command
             return Intent(
                 name=classified,
-                parameters=self._extract_parameters(cleaned),
+                parameters=parameters,
                 raw_input=cleaned,
                 source=source,
                 resolved_by="ai",
             )
-        raise UnknownIntentError(text, self.supported_intents())
+        raise self._unknown(text)
+
+    def _unknown(self, text: str) -> UnknownIntentError:
+        """A refusal that says what this project *can* do.
+
+        Deduced the same way `baygon doctor` does, from the declared
+        providers and permissions — no provider is contacted, so a
+        refusal stays as fast as it should be.
+        """
+        from baygon.core import readiness
+
+        report = readiness.build(self._config, self._registry, self)
+        usable = [entry["intent"] for entry in report["intents"] if entry["ready"]]
+        return UnknownIntentError(
+            text, self.supported_intents(), usable=usable, commands=report["commands"]
+        )
 
     def _classify_with_ai(self, text: str, ai_model: str | None = None) -> str | None:
         if not self._registry.is_available("ai"):
@@ -257,35 +312,47 @@ class IntentEngine:
         # An explicitly requested model that does not exist is an error,
         # not a silent fallback to another one.
         model = self._registry.resolve("ai", requested=ai_model)
-        known = self.supported_intents()
+        # The project's own commands are intentions too: without them,
+        # no phrasing that avoids their literal name can ever reach one.
+        labels = list(self.supported_intents()) + [
+            f"RunCommand:{command}" for command in sorted(self._config.commands)
+        ]
+        catalogue = "\n".join(
+            f"- {label} — {_purpose(label)}" for label in labels
+        )
         prompt = (
             "Classify the operator request below into exactly one of these "
             "intentions, or answer NONE if none fits.\n"
-            "Answer with the intention name only, nothing else.\n\n"
-            "Intentions:\n"
-            + "\n".join(f"- {name}" for name in known)
-            + f"\n\nRequest: {text}\n"
+            "Answer with the label only, nothing else.\n\n"
+            "Intentions:\n" + catalogue + f"\n\nRequest: {text}\n"
         )
         try:
             answer = model.complete(prompt)
         except Exception:
             # An unreachable model must never break intent resolution.
             return None
-        candidate = str(answer).strip().splitlines()[0].strip().strip(".`\"' ")
-        return candidate if candidate in known else None
+        return _match_label(answer, labels)
 
     def _extract_parameters(self, text: str) -> dict[str, Any]:
         params: dict[str, Any] = {}
         lowered = text.lower()
         service = _SERVICE.search(text)
         if service:
-            params["service"] = service.group("name").lower()
+            name = service.group("name").lower()
+            # "l'état de la production" names an environment, not a
+            # service; asking the supervisor about it would be nonsense.
+            if name not in _ENVIRONMENTS:
+                params["service"] = name
         for env in _ENVIRONMENTS:
             if env in lowered or (env == "development" and "dev" in lowered.split()):
                 params["environment"] = env
                 break
         else:
             params["environment"] = "development"
+        if _LAST_INCIDENT.search(text):
+            params["from_last_incident"] = True
+        if _LAST_DIAGNOSIS.search(text):
+            params["from_last_diagnosis"] = True
         hours = _HOURS.search(text)
         if hours:
             params["since_hours"] = int(hours.group(1))
@@ -324,8 +391,28 @@ class IntentEngine:
             intent=intent,
             steps=steps,
             reasoning=reasoning,
+            ai=ai,
+            ai_model=ai_model,
             **extras,
         )
+
+    def plan_for(self, name: str) -> Plan:
+        """A representative plan for an intention, built from nothing.
+
+        Used to answer "what would this intention need?" without a
+        phrase to parse and without contacting anything. `RunCommand`
+        is the exception: it exists once per declared command, so it is
+        reported through the command list instead.
+        """
+        parameters: dict[str, Any] = {"environment": "production", "service": ""}
+        if name == "RunCommand":
+            command = next(iter(sorted(self._config.commands)), "")
+            parameters["command"] = command
+        intent = Intent(name=name, parameters=parameters, raw_input="")
+        built = getattr(self, f"_plan_{_snake(name)}")(intent)
+        extras = built[2] if len(built) > 2 else {}
+        return Plan(id=_plan_id(intent), intent=intent, steps=built[0],
+                    reasoning=list(built[1]), **extras)
 
     def _plan_deploy_project(self, intent: Intent) -> tuple[list[Step], list[str]]:
         env = intent.parameters["environment"]
@@ -371,6 +458,8 @@ class IntentEngine:
                   parameters={"service": service, "environment": env}, risk=risk)],
             [f"Restarting service {service!r} on {env}: the declared supervisor "
              "performs the restart, Baygon only asks for it",
+             "L'état observé après l'action est rapporté : un code de retour "
+             "dit qu'une commande a tourné, pas dans quel état est le service",
              "The operation is gated by the 'restart' permission"],
         )
 
@@ -409,6 +498,15 @@ class IntentEngine:
             [f"Log consultation on {env} over the last {since}h is a read-only action"],
         )
 
+    def _plan_show_traces(self, intent: Intent) -> tuple[list[Step], list[str]]:
+        env = intent.parameters["environment"]
+        since = intent.parameters.get("since_hours", 1)
+        return (
+            [Step(id="1", capability="traces", action="fetch",
+                  parameters={"environment": env, "since_hours": since}, risk=RiskLevel.LOW)],
+            [f"Trace consultation on {env} over the last {since}h is a read-only action"],
+        )
+
     def _plan_show_metrics(self, intent: Intent) -> tuple[list[Step], list[str]]:
         env = intent.parameters["environment"]
         return (
@@ -419,6 +517,17 @@ class IntentEngine:
 
     def _plan_show_status(self, intent: Intent) -> tuple[list[Step], list[str]]:
         env = intent.parameters["environment"]
+        service = intent.parameters.get("service")
+        # A named service is a question for its supervisor; the cloud
+        # would answer about the deployment, which is not what was asked.
+        if service and self._registry.is_available("service"):
+            return (
+                [Step(id="1", capability="service", action="status",
+                      parameters={"service": service, "environment": env},
+                      risk=RiskLevel.LOW)],
+                [f"State of service {service!r} on {env}, as observed by the "
+                 "declared supervisor — reading a state changes nothing"],
+            )
         return (
             [Step(id="1", capability="deployment", action="status",
                   parameters={"environment": env}, risk=RiskLevel.LOW)],
@@ -544,9 +653,31 @@ class IntentEngine:
                  parameters={"environment": env, "since_hours": since}, risk=RiskLevel.LOW),
             Step(id="2", capability="metrics", action="fetch",
                  parameters={"environment": env}, risk=RiskLevel.LOW),
-            Step(id="3", capability="deployment", action="status",
-                 parameters={"environment": env}, risk=RiskLevel.LOW),
         ]
+        if self._registry.is_available("deployment"):
+            steps.append(
+                Step(id=str(len(steps) + 1), capability="deployment", action="status",
+                     parameters={"environment": env}, risk=RiskLevel.LOW)
+            )
+        else:
+            # A read-only project declares no deployment provider; logs
+            # and metrics still make a diagnosis (ENF-006), like running
+            # without traces or without AI.
+            reasoning.append(
+                "No deployment capability declared: diagnosis runs on logs "
+                "and metrics only"
+            )
+        if self._registry.is_available("traces"):
+            # Traces say *where* the time goes; logs and metrics only say
+            # that something is wrong (EF-007).
+            reasoning.append(
+                "Tracing capability available: distributed traces are collected too"
+            )
+            steps.append(
+                Step(id=str(len(steps) + 1), capability="traces", action="fetch",
+                     parameters={"environment": env, "since_hours": since},
+                     risk=RiskLevel.LOW)
+            )
         if self._session_ai and self._registry.is_available("ai"):
             chosen = self._session_ai_model
             reasoning.append(
@@ -554,10 +685,11 @@ class IntentEngine:
                 + (f"the {chosen!r} model" if chosen else "the model")
                 + " for analysis"
             )
+            collected = [step.id for step in steps]
             steps.append(
-                Step(id="4", capability="ai", action="complete",
+                Step(id=str(len(steps) + 1), capability="ai", action="complete",
                      parameters={"prompt": f"Diagnose the state of {self._config.project_name} on {env}"},
-                     depends_on=["1", "2", "3"], risk=RiskLevel.LOW,
+                     depends_on=collected, risk=RiskLevel.LOW,
                      implementation=chosen)
             )
         else:
@@ -565,6 +697,57 @@ class IntentEngine:
                 "No AI used: raw context is returned (degraded mode, EF-014)"
             )
         return steps, reasoning
+
+
+#: What each intention is for. A CamelCase name leaves a small model
+#: guessing; one line of purpose costs nothing and removes the guess.
+_PURPOSE = {
+    "DeployProject": "deploy the project to an environment",
+    "RollbackDeployment": "undo the last deployment of an environment",
+    "ProposeChanges": "publish the current work for human review",
+    "FixBug": "have the coding agent fix a bug, then check it",
+    "BackupProject": "back up an environment",
+    "RestoreProject": "restore an environment from its latest backup",
+    "OpenConsole": "get the authorized command to open a remote console",
+    "ShowDatabase": "show database connection information",
+    "ShowStorage": "list stored files",
+    "RestartService": "restart a service through its supervisor",
+    "ShowStatus": "show the state of a deployment or of a named service",
+    "Diagnose": "investigate a problem: gather logs, metrics, traces, status",
+    "ShowLogs": "read recent log lines",
+    "ShowTraces": "read distributed traces, slowest first",
+    "ShowMetrics": "read metrics, statistics, performance figures",
+    "ShowHistory": "list recent commits of the repository",
+}
+
+#: Characters models decorate their answers with. Formatting is not
+#: meaning: `**ShowMetrics**` is the same answer as ShowMetrics.
+#: `:` is absent on purpose: a label may contain one (RunCommand:test),
+#: so it is trimmed at the edges only, never inside.
+_DECORATION = re.compile(r"[*`_~\"'.,;!?()\[\]]|^-\s*")
+
+
+def _purpose(label: str) -> str:
+    if label.startswith("RunCommand:"):
+        return f"run the project's declared {label.split(':', 1)[1]!r} command"
+    return _PURPOSE.get(label, "")
+
+
+def _match_label(answer: Any, labels: list[str]) -> str | None:
+    """The label a model meant, whatever decoration it wrapped it in.
+
+    Only the *form* is forgiven. The set is not: an answer outside the
+    catalogue stays a refusal, so Baygon never invents an action
+    (Article 5).
+    """
+    line = str(answer).strip().splitlines()[0] if str(answer).strip() else ""
+    # A label may itself contain ':' (RunCommand:test), so the colon is
+    # stripped only at the edges, never inside.
+    cleaned = _DECORATION.sub("", line.strip()).strip().strip(":").strip()
+    for label in labels:
+        if cleaned.lower() == label.lower():
+            return label
+    return None
 
 
 def _title_from(description: str) -> str:

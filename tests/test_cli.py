@@ -1,5 +1,6 @@
 import contextlib
 import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -70,7 +71,60 @@ class CliTest(unittest.TestCase):
     def test_unknown_intent_exits_2(self) -> None:
         code, _, err = self._run("run", "fais-moi un café")
         self.assertEqual(code, 2)
-        self.assertIn("Supported intentions", err)
+        # The refusal guides: what works here, and where to see the rest.
+        self.assertIn("Usable here", err)
+        self.assertIn("DeployProject", err)
+        self.assertIn("doctor", err)
+
+
+class StandardOutputStaysParsableTest(unittest.TestCase):
+    """`baygon run` must stay pipeable into a program.
+
+    Standard output carries the result and nothing else. Anything a
+    human is meant to read — progress, notifications — belongs on the
+    error stream, or `baygon run ... | jq` breaks on a line that was
+    never part of the result.
+    """
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.file = str(Path(tmp.name) / "baygon.yaml")
+        Path(self.file).write_text(
+            MINIMAL_YAML.replace(
+                "providers: {}",
+                "providers:\n"
+                "      cloud:\n"
+                "        type: deployment\n"
+                "        plugin: tests.helpers:FakeDeployment\n"
+                "        default: true\n"
+                "      git:\n"
+                "        type: repository\n"
+                "        plugin: tests.helpers:FakeRepository\n"
+                "        default: true\n"
+                "      notifier:\n"
+                "        type: notification\n"
+                "        plugin: baygon_plugins.console_notification:ConsoleNotification\n"
+                "        default: true",
+            ),
+            encoding="utf-8",
+        )
+
+    def test_a_notification_does_not_break_the_json_on_stdout(self) -> None:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = main(["-f", self.file, "run", "deploy to staging"])
+
+        self.assertEqual(code, 0)
+        result = json.loads(out.getvalue())  # the whole stream, parsed as one
+        self.assertTrue(result["success"])
+        notified = [
+            step for step in result["steps"] if step["capability"] == "notification"
+        ]
+        self.assertTrue(notified, "the plan really did notify")
+        self.assertIn(
+            "[notification]", err.getvalue(), "the human-facing line went to stderr"
+        )
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ are registered through the Capability Registry.
 
 from baygon.capabilities.base import (
     CAPABILITY_CONTRACTS,
+    ActionableError,
     AICapability,
     BackupCapability,
     CapabilityImplementation,
@@ -24,11 +25,13 @@ from baygon.capabilities.base import (
     ServiceCapability,
     SSHCapability,
     StorageCapability,
+    TracesCapability,
     WorkspaceCapability,
 )
 
 __all__ = [
     "CAPABILITY_CONTRACTS",
+    "ActionableError",
     "AICapability",
     "BackupCapability",
     "CapabilityImplementation",
@@ -46,5 +49,6 @@ __all__ = [
     "ServiceCapability",
     "SSHCapability",
     "StorageCapability",
+    "TracesCapability",
     "WorkspaceCapability",
 ]

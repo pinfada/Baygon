@@ -21,7 +21,7 @@ import os
 import urllib.parse
 from typing import Any
 
-from baygon.capabilities import DatabaseCapability
+from baygon.capabilities import ActionableError, DatabaseCapability
 
 
 class PostgresDatabase(DatabaseCapability):
@@ -34,9 +34,13 @@ class PostgresDatabase(DatabaseCapability):
         mapping = self.config.get("dsn_env") or {}
         variable = mapping.get(environment)
         if not variable:
-            raise ValueError(
-                f"no DSN variable declared for environment {environment!r}; "
-                "declare it under options.dsn_env in baygon.yaml"
+            declared = ", ".join(sorted(mapping)) or "none"
+            raise ActionableError(
+                f"no DSN variable declared for environment {environment!r}",
+                [
+                    f"declare options.dsn_env.{environment} in baygon.yaml",
+                    f"or target a declared environment: {declared}",
+                ],
             )
         return str(variable)
 
@@ -47,7 +51,13 @@ class PostgresDatabase(DatabaseCapability):
         variable = self._dsn_var(environment)
         dsn = os.environ.get(variable)
         if not dsn:
-            raise ValueError(f"environment variable {variable!r} is not set")
+            raise ActionableError(
+                f"environment variable {variable!r} is not set",
+                [
+                    f"export {variable}=postgres://user:password@host:port/database",
+                    "the value stays in the environment; Baygon never stores it (EF-011)",
+                ],
+            )
         parsed = urllib.parse.urlsplit(dsn)
         return {
             "environment": environment,
